@@ -1,11 +1,19 @@
 //! Archiver: consumes `ais.decoded.>` and batch-inserts vessel history into
 //! ClickHouse (positions + latest statics). Inserts go over the HTTP
 //! interface as JSONEachRow; batches flush on size or age.
+//!
+//! Also serves the history query API (`/v1/history/{mmsi}`). Queries hit the
+//! same ClickHouse table regardless of data age — rows past the hot window
+//! live on the S3 cold volume and simply read slower.
 
+mod ch;
+mod history;
 mod schema;
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use ch::ClickHouse;
 use chrono::DateTime;
 use futures::StreamExt;
 use openseafeed_feed::{headers, StreamMessage};
@@ -46,80 +54,6 @@ struct StaticRow {
     dim_d: u8,
 }
 
-struct ClickHouse {
-    http: reqwest::Client,
-    url: String,
-    db: String,
-    user: Option<String>,
-    password: Option<String>,
-}
-
-impl ClickHouse {
-    fn from_env() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            url: std::env::var("OSF_CLICKHOUSE_URL")
-                .unwrap_or_else(|_| "http://localhost:8123".into()),
-            db: std::env::var("OSF_CLICKHOUSE_DB").unwrap_or_else(|_| "osf".into()),
-            user: std::env::var("OSF_CLICKHOUSE_USER").ok(),
-            password: std::env::var("OSF_CLICKHOUSE_PASSWORD").ok(),
-        }
-    }
-
-    async fn exec(&self, sql: &str, body: Option<Vec<u8>>) -> anyhow::Result<()> {
-        let mut req = self.http.post(&self.url);
-        if let Some(u) = &self.user {
-            req = req.header("X-ClickHouse-User", u);
-        }
-        if let Some(p) = &self.password {
-            req = req.header("X-ClickHouse-Key", p);
-        }
-        let req = match body {
-            // SQL goes in the query string, data in the body.
-            Some(data) => req.query(&[("query", sql)]).body(data),
-            None => req.body(sql.to_string()),
-        };
-        let resp = req.timeout(Duration::from_secs(30)).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("clickhouse {status}: {text}");
-        }
-        Ok(())
-    }
-
-    async fn migrate(&self) -> anyhow::Result<()> {
-        let hot_days: u32 = env_num("OSF_HOT_DAYS", 14);
-        let retain_days: u32 = env_num("OSF_RETAIN_DAYS", 365);
-        let tiered = std::env::var("OSF_CLICKHOUSE_TIERED").map(|v| v == "1").unwrap_or(false);
-        for sql in schema::migrations(&self.db, hot_days, retain_days, tiered) {
-            self.exec(&sql, None).await?;
-        }
-        tracing::info!(db = self.db, hot_days, retain_days, tiered, "schema ready");
-        Ok(())
-    }
-
-    async fn insert<T: Serialize>(&self, table: &str, rows: &[T]) -> anyhow::Result<()> {
-        if rows.is_empty() {
-            return Ok(());
-        }
-        let mut body = Vec::with_capacity(rows.len() * 128);
-        for r in rows {
-            serde_json::to_writer(&mut body, r)?;
-            body.push(b'\n');
-        }
-        let sql = format!("INSERT INTO {}.{} FORMAT JSONEachRow", self.db, table);
-        self.exec(&sql, Some(body)).await
-    }
-}
-
-fn env_num<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -129,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let ch = ClickHouse::from_env();
+    let ch = Arc::new(ClickHouse::from_env());
     // Retry migrations until ClickHouse is up; the data plane must not
     // crash-loop just because history storage lags behind.
     loop {
@@ -150,12 +84,20 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     tracing::info!(nats_url, "archiver consuming");
 
-    // Health endpoint.
+    // Health + history query API.
     let http_addr = std::env::var("OSF_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:8084".into());
+    let hist = Arc::new(history::HistoryState {
+        ch: ch.clone(),
+        validator: openseafeed_keys::Validator::from_env(),
+    });
     tokio::spawn(async move {
-        let router = axum::Router::new().route("/healthz", axum::routing::get(|| async { "ok" }));
-        if let Ok(l) = tokio::net::TcpListener::bind(&http_addr).await {
-            let _ = axum::serve(l, router).await;
+        let router = history::router(hist);
+        match tokio::net::TcpListener::bind(&http_addr).await {
+            Ok(l) => {
+                tracing::info!(http_addr, "history api listening");
+                let _ = axum::serve(l, router).await;
+            }
+            Err(e) => tracing::error!(error = %e, "history api bind failed"),
         }
     });
 

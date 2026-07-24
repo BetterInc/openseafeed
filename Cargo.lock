@@ -1210,6 +1210,7 @@ dependencies = [
  "chrono",
  "futures",
  "openseafeed-feed",
+ "openseafeed-keys",
  "reqwest",
  "serde",
  "serde_json",
