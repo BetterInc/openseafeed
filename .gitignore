@@ -1,0 +1,15 @@
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+.env
+.env.*
+!.env.example
+/web/node_modules/
+.terraform/
+*.tfstate
+*.tfstate.backup
+.tofu/
+snapshots/
+*.db

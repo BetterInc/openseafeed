@@ -1,0 +1,14 @@
+[package]
+name = "openseafeed-ais"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AIS (ITU-R M.1371) decoder with aisstream.io-compatible JSON output"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

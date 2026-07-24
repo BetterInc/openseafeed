@@ -1,0 +1,10 @@
+[package]
+name = "openseafeed-nmea"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NMEA 0183 AIVDM/AIVDO parsing and multipart reassembly"
+
+[dependencies]
+thiserror.workspace = true

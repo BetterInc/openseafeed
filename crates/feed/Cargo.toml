@@ -1,0 +1,13 @@
+[package]
+name = "openseafeed-feed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Message envelopes and NATS subject conventions shared across services"
+
+[dependencies]
+openseafeed-ais = { path = "../ais" }
+openseafeed-geo = { path = "../geo" }
+serde.workspace = true
+serde_json.workspace = true
