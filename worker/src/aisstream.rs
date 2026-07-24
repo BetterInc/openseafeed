@@ -1,19 +1,17 @@
 //! aisstream upstream: consume aisstream.io's own v0 stream.
 //!
 //! aisstream.io's wire format is the same StreamMessage shape this project
-//! emits, so we deserialize the inner packet straight into `openseafeed_ais`
-//! structs and re-encode to AIVDM, keeping one ingest format across sources.
+//! emits, so the inner `Message` object deserializes directly into our
+//! `Packet` (serde external tagging) and re-encodes to AIVDM — covering every
+//! message type the crate can encode, not just a hand-picked few.
 
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
 use futures::{SinkExt, StreamExt};
-use openseafeed_ais::{
-    encode_position_report, encode_ship_static_data, encode_standard_class_b, PositionReport,
-    ShipStaticData, StandardClassBPositionReport,
-};
+use openseafeed_ais::Packet;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::backoff::Backoff;
@@ -30,83 +28,55 @@ pub const AISSTREAM_HELP: &str = "aisstream: set OSF_AISSTREAM_KEY to your aisst
 struct Frame {
     #[serde(rename = "MessageType")]
     message_type: String,
+    /// Externally-tagged packet, e.g. `{"PositionReport": {...}}`.
     #[serde(rename = "Message")]
-    message: FrameMessage,
-}
-
-/// The `Message` object is keyed by the message-type name; only the field
-/// matching this frame's type is populated.
-#[derive(Debug, Default, Deserialize)]
-struct FrameMessage {
-    #[serde(rename = "PositionReport")]
-    position_report: Option<PositionReport>,
-    #[serde(rename = "ShipStaticData")]
-    ship_static_data: Option<ShipStaticData>,
-    #[serde(rename = "StandardClassBPositionReport")]
-    standard_class_b: Option<StandardClassBPositionReport>,
+    message: Value,
 }
 
 enum Convert {
-    Lines(Vec<String>),
-    /// A message type we do not re-encode.
-    Skip(String),
-    /// Parse failure, or a known type whose payload didn't deserialize.
-    Invalid,
+    Lines { kind: String, lines: Vec<String> },
+    /// Bad JSON, an unrecognized message type, or a type we can't encode
+    /// (`Unknown`). Expected to be near zero against a live feed.
+    Failed,
 }
 
 fn convert(text: &str, seq: u8) -> Convert {
     let frame: Frame = match serde_json::from_str(text) {
         Ok(f) => f,
-        Err(_) => return Convert::Invalid,
+        Err(_) => return Convert::Failed,
     };
-    let encoded = match frame.message_type.as_str() {
-        "PositionReport" => frame
-            .message
-            .position_report
-            .map(|p| encode_position_report(&p)),
-        "ShipStaticData" => frame
-            .message
-            .ship_static_data
-            .map(|p| encode_ship_static_data(&p)),
-        "StandardClassBPositionReport" => frame
-            .message
-            .standard_class_b
-            .map(|p| encode_standard_class_b(&p)),
-        other => return Convert::Skip(other.to_string()),
+    let packet: Packet = match serde_json::from_value(frame.message) {
+        Ok(p) => p,
+        Err(_) => return Convert::Failed,
     };
-    match encoded {
-        Some((payload, fill)) => {
-            Convert::Lines(openseafeed_nmea::to_sentences(&payload, fill, "A", seq))
-        }
-        None => Convert::Invalid,
+    match packet.encode() {
+        Some((payload, fill)) => Convert::Lines {
+            kind: frame.message_type,
+            lines: openseafeed_nmea::to_sentences(&payload, fill, "A", seq),
+        },
+        None => Convert::Failed,
     }
 }
 
 #[derive(Default)]
-struct SkipCounts {
-    total: u64,
-    by_type: BTreeMap<String, u64>,
+struct Counts {
+    converted: BTreeMap<String, u64>,
+    failed: u64,
 }
 
-fn handle_text(
-    text: &str,
-    queue: &LineQueue,
-    stats: &Stats,
-    seq: &mut u8,
-    skips: &mut SkipCounts,
-) {
+fn handle_text(text: &str, queue: &LineQueue, stats: &Stats, seq: &mut u8, counts: &mut Counts) {
     match convert(text, *seq) {
-        Convert::Lines(lines) => {
+        Convert::Lines { kind, lines } => {
             *seq = seq.wrapping_add(1);
+            *counts.converted.entry(kind).or_default() += 1;
             for line in &lines {
                 ingest_line(line, queue, stats);
             }
         }
-        Convert::Skip(kind) => {
-            skips.total += 1;
-            *skips.by_type.entry(kind).or_default() += 1;
+        Convert::Failed => {
+            counts.failed += 1;
+            Stats::incr(&stats.invalid);
         }
-        Convert::Invalid => Stats::incr(&stats.invalid),
     }
 }
 
@@ -130,13 +100,13 @@ pub async fn read(queue: &LineQueue, stats: &Stats, backoff: &mut Backoff) -> Re
     tracing::info!("connected to aisstream.io");
 
     let mut seq: u8 = 0;
-    let mut skips = SkipCounts::default();
+    let mut counts = Counts::default();
     while let Some(msg) = stream.next().await {
         match msg? {
-            Message::Text(text) => handle_text(text.as_str(), queue, stats, &mut seq, &mut skips),
+            Message::Text(text) => handle_text(text.as_str(), queue, stats, &mut seq, &mut counts),
             Message::Binary(bytes) => {
                 if let Ok(text) = std::str::from_utf8(&bytes) {
-                    handle_text(text, queue, stats, &mut seq, &mut skips);
+                    handle_text(text, queue, stats, &mut seq, &mut counts);
                 }
             }
             Message::Close(_) => break,
@@ -144,8 +114,12 @@ pub async fn read(queue: &LineQueue, stats: &Stats, backoff: &mut Backoff) -> Re
         }
     }
 
-    if skips.total > 0 {
-        tracing::debug!(skipped = skips.total, breakdown = ?skips.by_type, "aisstream skipped unconverted message types");
+    if !counts.converted.is_empty() || counts.failed > 0 {
+        tracing::debug!(
+            converted = ?counts.converted,
+            failed = counts.failed,
+            "aisstream conversion breakdown"
+        );
     }
     Ok(())
 }
@@ -153,7 +127,7 @@ pub async fn read(queue: &LineQueue, stats: &Stats, backoff: &mut Backoff) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openseafeed_ais::{decode, Packet};
+    use openseafeed_ais::{decode, Header, LongRangeAisBroadcastMessage, Packet};
 
     // A realistic aisstream.io PositionReport frame. Field names match the
     // aisstream v0 wire format (which this project's types mirror).
@@ -173,9 +147,10 @@ mod tests {
 
     #[test]
     fn position_frame_converts_and_decodes_back() {
-        let Convert::Lines(lines) = convert(POSITION_FRAME, 0) else {
+        let Convert::Lines { kind, lines } = convert(POSITION_FRAME, 0) else {
             panic!("expected conversion to lines");
         };
+        assert_eq!(kind, "PositionReport");
         assert_eq!(lines.len(), 1);
         let s = openseafeed_nmea::parse(&lines[0]).unwrap();
         let m = decode(&s.payload, s.fill_bits).unwrap();
@@ -190,17 +165,52 @@ mod tests {
     }
 
     #[test]
-    fn unknown_message_type_is_skipped() {
-        let frame = r#"{"MessageType":"AidsToNavigationReport",
-            "Message":{"AidsToNavigationReport":{"UserID":1}}}"#;
-        match convert(frame, 0) {
-            Convert::Skip(kind) => assert_eq!(kind, "AidsToNavigationReport"),
-            _ => panic!("expected skip"),
-        }
+    fn long_range_type27_frame_converts_and_decodes_back() {
+        // Build the frame from our own serialization so the field names are
+        // guaranteed to match what deserialize expects.
+        let original = LongRangeAisBroadcastMessage {
+            header: Header {
+                message_id: 27,
+                repeat_indicator: 0,
+                user_id: 219_000_001,
+                valid: true,
+            },
+            position_accuracy: false,
+            raim: false,
+            navigational_status: 5,
+            longitude: 12.5,
+            latitude: 55.7,
+            sog: 12.0,
+            cog: 180.0,
+            position_latency: false,
+            spare: false,
+        };
+        let message =
+            serde_json::to_value(Packet::LongRangeAisBroadcastMessage(original.clone())).unwrap();
+        let frame = json!({
+            "MessageType": "LongRangeAisBroadcastMessage",
+            "Message": message,
+        });
+
+        let Convert::Lines { kind, lines } = convert(&frame.to_string(), 0) else {
+            panic!("expected conversion to lines");
+        };
+        assert_eq!(kind, "LongRangeAisBroadcastMessage");
+        let s = openseafeed_nmea::parse(&lines[0]).unwrap();
+        let m = decode(&s.payload, s.fill_bits).unwrap();
+        assert_eq!(m.mmsi, 219_000_001);
+        assert!(matches!(m.packet, Packet::LongRangeAisBroadcastMessage(_)));
     }
 
     #[test]
-    fn malformed_json_is_invalid() {
-        assert!(matches!(convert("not json", 0), Convert::Invalid));
+    fn unknown_message_type_fails() {
+        let frame = r#"{"MessageType":"SomeFutureType",
+            "Message":{"SomeFutureType":{"UserID":1}}}"#;
+        assert!(matches!(convert(frame, 0), Convert::Failed));
+    }
+
+    #[test]
+    fn malformed_json_fails() {
+        assert!(matches!(convert("not json", 0), Convert::Failed));
     }
 }
