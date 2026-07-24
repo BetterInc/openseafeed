@@ -35,8 +35,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Run as an unprivileged user.
-RUN useradd --system --uid 10001 --user-group --home /app osf
+# Run as an unprivileged user. /data subdirs are created here so named
+# volumes mounted there inherit osf ownership on first use.
+RUN useradd --system --uid 10001 --user-group --home /app osf \
+    && mkdir -p /data/control /data/snapshots \
+    && chown -R osf:osf /data
 WORKDIR /app
 
 COPY --from=builder /app/target/release/openseafeed-ingest      /usr/local/bin/

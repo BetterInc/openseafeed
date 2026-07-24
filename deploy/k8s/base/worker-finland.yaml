@@ -1,22 +1,22 @@
-# Feed connector: Norway (Kystverket public TCP). A separate worker process,
-# one per upstream feed, pushing into the in-cluster ingest ClusterIP.
+# Feed connector: Finland (Digitraffic public MQTT/WSS). A separate worker
+# process, one per upstream feed, pushing into the in-cluster ingest ClusterIP.
 # Independent of the platform — the same binary runs on a VPS or Pi just as well
 # (see docs/connectors.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: worker-norway
+  name: worker-finland
   labels:
-    app: worker-norway
+    app: worker-finland
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: worker-norway
+      app: worker-finland
   template:
     metadata:
       labels:
-        app: worker-norway
+        app: worker-finland
     spec:
       containers:
         - name: worker
@@ -25,7 +25,7 @@ spec:
             - openseafeed-worker
             - connect
             - --upstream
-            - norway
+            - finland
             - --ingest
             - tcp://ingest:10111
             - --key
@@ -37,7 +37,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: openseafeed-secrets
-                  key: OSF_FEED_KEY_NORWAY
+                  key: OSF_FEED_KEY_FINLAND
           resources:
             requests:
               cpu: 25m

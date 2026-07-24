@@ -1,0 +1,59 @@
+# Feed connector: aisstream.io (third-party aggregator). EXAMPLE —
+# intentionally NOT wired into kustomization.yaml. Requires your aisstream.io
+# API key (OSF_AISSTREAM_KEY) in addition to your own feed key.
+#
+# NOTE: contributing a third-party aggregator's feed is subject to that
+# provider's terms — you are responsible for having the right to do so. The
+# source is tagged `connect:aisstream` so it can be filtered downstream.
+#
+# To enable:
+#   1. Put OSF_AISSTREAM_KEY and OSF_FEED_KEY_AISSTREAM in openseafeed-secrets.
+#   2. Add this file to the `resources:` list in kustomization.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-aisstream
+  labels:
+    app: worker-aisstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-aisstream
+  template:
+    metadata:
+      labels:
+        app: worker-aisstream
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/openseafeed/openseafeed:latest
+          command:
+            - openseafeed-worker
+            - connect
+            - --upstream
+            - aisstream
+            - --ingest
+            - tcp://ingest:10111
+            - --key
+            - $(OSF_FEED_KEY)
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: OSF_FEED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_FEED_KEY_AISSTREAM
+            - name: OSF_AISSTREAM_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_AISSTREAM_KEY
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi

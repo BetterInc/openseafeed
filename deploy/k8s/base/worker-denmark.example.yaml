@@ -1,0 +1,56 @@
+# Feed connector: Denmark (DMA). EXAMPLE — intentionally NOT wired into
+# kustomization.yaml, because the Danish feed requires a per-user upstream
+# address granted by DMA (Danish Maritime Authority). To enable:
+#   1. Get your DMA grant (host:port) and put it in the secret as
+#      OSF_DENMARK_ADDR (tcp://host:port), plus OSF_FEED_KEY_DENMARK.
+#   2. Add this file to the `resources:` list in kustomization.yaml.
+# The worker exits with code 2 and printed instructions if OSF_DENMARK_ADDR is
+# unset. See docs/connectors.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-denmark
+  labels:
+    app: worker-denmark
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-denmark
+  template:
+    metadata:
+      labels:
+        app: worker-denmark
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/openseafeed/openseafeed:latest
+          command:
+            - openseafeed-worker
+            - connect
+            - --upstream
+            - denmark
+            - --ingest
+            - tcp://ingest:10111
+            - --key
+            - $(OSF_FEED_KEY)
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: OSF_FEED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_FEED_KEY_DENMARK
+            - name: OSF_DENMARK_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_DENMARK_ADDR
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi

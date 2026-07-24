@@ -16,3 +16,4 @@ snapshots/
 /target/
 control.db
 nohup.out
+.e2e-venv/

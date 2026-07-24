@@ -21,7 +21,10 @@ resources:
   - clickhouse.yaml
   - archiver.yaml
   - worker-norway.yaml
+  - worker-finland.yaml
   - pdb.yaml
+  # worker-denmark.example.yaml is intentionally NOT listed — enable per the
+  # instructions in that file once you have a DMA grant.
 
 # The Secret is applied out-of-band (see secret.example.yaml); it is not part
 # of the kustomize build so real values never live in git.

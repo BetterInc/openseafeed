@@ -1,0 +1,45 @@
+# OpenSeaFeed feed connector — templated systemd unit.
+#
+# One instance per upstream feed; the instance name (%i) is the --upstream
+# value. Configuration lives in /etc/openseafeed/<upstream>.env.
+#
+#   sudo systemctl enable --now openseafeed-connector@norway
+#   sudo systemctl enable --now openseafeed-connector@finland
+#   journalctl -u openseafeed-connector@norway -f
+#
+# The connector is a self-contained edge process: it needs only outbound
+# network to the upstream and to the ingest endpoint. See docs/connectors.md.
+[Unit]
+Description=OpenSeaFeed feed connector (%i)
+Documentation=https://github.com/openseafeed/openseafeed/blob/main/docs/connectors.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/openseafeed/%i.env
+ExecStart=/usr/local/bin/openseafeed-worker connect --upstream %i --ingest ${OSF_INGEST_URL} --key ${OSF_FEED_KEY}
+Restart=always
+RestartSec=5
+
+# Run as a transient, unprivileged, per-instance user.
+DynamicUser=yes
+
+# Hardening — a connector only needs outbound network; deny everything else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

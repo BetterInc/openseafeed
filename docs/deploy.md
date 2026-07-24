@@ -34,11 +34,16 @@ cargo run -p openseafeed-worker -- forward \
   --ingest udp://localhost:10110 --key osf_stn_dev
 ```
 
-Pull a live open-government feed (opt-in `feeds` profile):
+Pull live open-government feeds (opt-in `feeds` profile):
 
 ```sh
-docker compose --profile feeds up -d norway-feed
+docker compose --profile feeds up -d          # norway + finland connectors
 ```
+
+Feed connectors are separate, independently deployable workers (one per
+upstream, own feed key, runnable on any VPS/Pi/cluster). Their full story —
+systemd, compose, and k8s options plus per-feed notes — is in
+[connectors.md](connectors.md).
 
 ### How data flows
 

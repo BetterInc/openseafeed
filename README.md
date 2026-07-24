@@ -65,6 +65,8 @@ cargo run -p openseafeed-worker -- forward --replay testdata/replay.nmea \
 python3 scripts/e2e.py   # needs: pip install websockets requests
 ```
 
+Want to contribute a feed (run a connector on a VPS, Pi, or your own cluster)? See [`docs/connectors.md`](docs/connectors.md).
+
 ## Status
 
 Early development. See `docs/` for the architecture plan and milestones.

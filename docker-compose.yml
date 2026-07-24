@@ -139,6 +139,11 @@ services:
       CLICKHOUSE_DB: osf
       CLICKHOUSE_USER: osf
       CLICKHOUSE_PASSWORD: osf-dev
+    configs:
+      # The image defaults to listening on [::]; on hosts/networks without
+      # IPv6 every listener fails and :8123 never comes up.
+      - source: clickhouse-listen
+        target: /etc/clickhouse-server/config.d/listen.xml
     ulimits:
       # ClickHouse opens many files; the image warns/underperforms below this.
       nofile:
@@ -149,7 +154,9 @@ services:
     volumes:
       - clickhouse:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      # 127.0.0.1, not localhost: busybox wget prefers ::1 and the server
+      # listens on IPv4 only (see the listen.xml config above).
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -182,8 +189,16 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Opt-in: pulls Norway's open government AIS feed and pushes it to ingest.
-  #   docker compose --profile feeds up -d norway-feed
+  # --- Feed connectors -----------------------------------------------------
+  # Each connector is a SEPARATE worker process: one per upstream feed, its own
+  # feed key, pushing into the ingest endpoint. They are independent of the
+  # platform and can run anywhere (a VPS, a Pi, someone else's cluster) — here
+  # they just happen to share the compose network and target the local ingest.
+  # All live behind the opt-in `feeds` profile:
+  #   docker compose --profile feeds up -d
+  # See docs/connectors.md.
+
+  # Norway — Kystverket public TCP feed. No extra config.
   norway-feed:
     build: .
     image: openseafeed:dev
@@ -196,7 +211,7 @@ services:
       - --ingest
       - tcp://ingest:10111
       - --key
-      - ${OSF_FEED_KEY_NORWAY:-osf_stn_dev}
+      - ${OSF_FEED_KEY_NORWAY:-osf_stn_devdevdev}
     environment:
       RUST_LOG: ${RUST_LOG:-info}
     depends_on:
@@ -204,7 +219,85 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Finland — Digitraffic public MQTT/WSS feed. No extra config.
+  finland-feed:
+    build: .
+    image: openseafeed:dev
+    profiles: ["feeds"]
+    command:
+      - openseafeed-worker
+      - connect
+      - --upstream
+      - finland
+      - --ingest
+      - tcp://ingest:10111
+      - --key
+      - ${OSF_FEED_KEY_FINLAND:-osf_stn_devdevdev}
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      ingest:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Denmark — requires a per-user upstream address granted by DMA. Uncomment
+  # and set OSF_DENMARK_ADDR + OSF_FEED_KEY_DENMARK to enable.
+  #   docker compose --profile feeds up -d denmark-feed
+  # denmark-feed:
+  #   build: .
+  #   image: openseafeed:dev
+  #   profiles: ["feeds"]
+  #   command:
+  #     - openseafeed-worker
+  #     - connect
+  #     - --upstream
+  #     - denmark
+  #     - --ingest
+  #     - tcp://ingest:10111
+  #     - --key
+  #     - ${OSF_FEED_KEY_DENMARK:-osf_stn_devdevdev}
+  #   environment:
+  #     RUST_LOG: ${RUST_LOG:-info}
+  #     OSF_DENMARK_ADDR: ${OSF_DENMARK_ADDR:?set to the tcp://host:port DMA granted you}
+  #   depends_on:
+  #     ingest:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+  # aisstream.io — third-party aggregator. Requires your aisstream.io API key
+  # (OSF_AISSTREAM_KEY) in addition to your own feed key. Uncomment to enable.
+  # NOTE: contributing a third-party aggregator's feed is subject to that
+  # provider's terms — you are responsible for having the right to do so.
+  #   docker compose --profile feeds up -d aisstream-feed
+  # aisstream-feed:
+  #   build: .
+  #   image: openseafeed:dev
+  #   profiles: ["feeds"]
+  #   command:
+  #     - openseafeed-worker
+  #     - connect
+  #     - --upstream
+  #     - aisstream
+  #     - --ingest
+  #     - tcp://ingest:10111
+  #     - --key
+  #     - ${OSF_FEED_KEY_AISSTREAM:-osf_stn_devdevdev}
+  #   environment:
+  #     RUST_LOG: ${RUST_LOG:-info}
+  #     OSF_AISSTREAM_KEY: ${OSF_AISSTREAM_KEY:?set to your aisstream.io API key}
+  #   depends_on:
+  #     ingest:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
 volumes:
   snapshots:
   control:
   clickhouse:
+
+configs:
+  clickhouse-listen:
+    content: |
+      <clickhouse>
+        <listen_host>0.0.0.0</listen_host>
+      </clickhouse>
