@@ -1,7 +1,9 @@
 //! NMEA 0183 AIVDM/AIVDO sentence parsing and multi-fragment reassembly.
 
 mod assembler;
+mod encode;
 pub use assembler::{Assembler, Group};
+pub use encode::to_sentences;
 
 use thiserror::Error;
 

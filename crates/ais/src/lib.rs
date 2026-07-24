@@ -4,10 +4,14 @@
 
 mod bits;
 mod decode;
+mod encode;
 mod types;
 
 pub use bits::Bits;
 pub use decode::{decode, decode_bits};
+pub use encode::{
+    encode_position_report, encode_ship_static_data, encode_standard_class_b, BitsMut,
+};
 pub use types::*;
 
 use thiserror::Error;
