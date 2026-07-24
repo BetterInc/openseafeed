@@ -4,27 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenSeaFeed — live</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; }
-  body { background: #0b1420; color: #cfe3f5; font: 14px/1.45 system-ui, sans-serif; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; background: #0b1420; color: #cfe3f5;
+         font: 14px/1.45 system-ui, sans-serif; }
   header { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: baseline;
            padding: .7rem 1rem; border-bottom: 1px solid #1d3242; }
   h1 { font-size: 1rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
   .stat b { color: #fff; font-variant-numeric: tabular-nums; }
-  .stat span { color: #7f9ab0; }
-  #controls { margin-left: auto; display: flex; gap: .5rem; }
-  input { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f; border-radius: 4px;
-          padding: .25rem .5rem; width: 15rem; font: inherit; }
+  .stat span, label { color: #7f9ab0; }
+  #controls { margin-left: auto; display: flex; gap: .75rem; align-items: center; }
+  input[type=text] { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f;
+          border-radius: 4px; padding: .25rem .5rem; width: 13rem; font: inherit; }
   button { background: #14532d; color: #d6ffe4; border: 1px solid #1f7a44; border-radius: 4px;
            padding: .25rem .9rem; font: inherit; cursor: pointer; }
   button:hover { background: #1a6b3a; }
-  #wrap { padding: 1rem; }
-  canvas { width: 100%; aspect-ratio: 2 / 1; background: #0e1b2a; border: 1px solid #1d3242;
-           border-radius: 6px; display: block; }
-  #recent { padding: 0 1rem 1rem; color: #7f9ab0; white-space: nowrap; overflow: hidden;
-            text-overflow: ellipsis; }
-  #recent b { color: #cfe3f5; font-weight: 500; }
+  #map { flex: 1; }
+  .maplibregl-popup-content { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f;
+      font: 13px/1.5 system-ui, sans-serif; padding: .6rem .8rem; }
+  .maplibregl-popup-tip { border-top-color: #24455f; }
+  .maplibregl-popup-content b { color: #7fd4a8; }
+  #legend { position: absolute; bottom: 2.2rem; left: .75rem; z-index: 5;
+            background: rgba(11,20,32,.85); border: 1px solid #1d3242; border-radius: 6px;
+            padding: .5rem .75rem; color: #7f9ab0; font-size: 12px; }
+  #legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+              margin-right: .35rem; vertical-align: -1px; }
 </style>
 </head>
 <body>
@@ -35,55 +42,99 @@
   <div class="stat"><b id="vessels">0</b> <span>vessels seen</span></div>
   <div class="stat"><span id="status">disconnected</span></div>
   <div id="controls">
-    <input id="key" value="osf_live_devdevdev" title="API key">
+    <label><input type="checkbox" id="seamarks"> seamarks</label>
+    <input type="text" id="key" value="osf_live_devdevdev" title="API key">
     <button id="go">connect</button>
   </div>
 </header>
-<div id="wrap"><canvas id="map" width="1920" height="960"></canvas></div>
-<div id="recent"></div>
+<div id="map"></div>
+<div id="legend">
+  <i style="background:#7fd4a8"></i>fresh (&lt;10 s)&ensp;
+  <i style="background:#3f7d97"></i>recent (&lt;2 min)&ensp;
+  <i style="background:#27455c"></i>older
+</div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 "use strict";
-const canvas = document.getElementById("map");
-const ctx = canvas.getContext("2d");
-const seen = new Map();          // mmsi -> {x, y, t}
-let total = 0, windowCount = 0, rate = 0;
+const map = new maplibregl.Map({
+  container: "map",
+  center: [10, 55],
+  zoom: 4,
+  attributionControl: { compact: true },
+  style: {
+    version: 8,
+    sources: {
+      base: {
+        type: "raster",
+        tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO &middot; seamarks &copy; OpenSeaMap",
+      },
+      seamark: {
+        type: "raster",
+        tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
+        tileSize: 256,
+      },
+      vessels: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+    },
+    layers: [
+      { id: "base", type: "raster", source: "base" },
+      { id: "seamark", type: "raster", source: "seamark",
+        layout: { visibility: "none" } },
+      { id: "vessels", type: "circle", source: "vessels",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.6, 8, 3.5, 12, 6],
+          // Freshness: bright green fading toward the deep blue of the sea.
+          "circle-color": ["step", ["get", "age"], "#7fd4a8", 10, "#3f7d97", 120, "#27455c"],
+          "circle-opacity": 0.95,
+        } },
+    ],
+  },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
+
+document.getElementById("seamarks").onchange = (e) =>
+  map.setLayoutProperty("seamark", "visibility", e.target.checked ? "visible" : "none");
+
+const seen = new Map(); // mmsi -> {lon, lat, t(ms), name, sog, cog, type}
+let total = 0, windowCount = 0;
 let ws = null;
 
-function project(lat, lon) {
-  return [ (lon + 180) / 360 * canvas.width,
-           (90 - lat) / 180 * canvas.height ];
-}
-
-function drawFrame() {
-  ctx.fillStyle = "#0e1b2a";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  // graticule
-  ctx.strokeStyle = "#16283a";
-  ctx.beginPath();
-  for (let lon = -150; lon < 180; lon += 30) {
-    const [x] = project(0, lon); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+function refresh() {
+  const now = Date.now();
+  const features = [];
+  for (const [mmsi, v] of seen) {
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [v.lon, v.lat] },
+      properties: { mmsi, age: (now - v.t) / 1000, name: v.name || "",
+                    sog: v.sog, cog: v.cog, type: v.type },
+    });
   }
-  for (let lat = -60; lat < 90; lat += 30) {
-    const [, y] = project(lat, 0); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
-  }
-  ctx.stroke();
-  // vessels: recent = bright green, older fade to blue-grey
-  const now = performance.now();
-  for (const v of seen.values()) {
-    const age = (now - v.t) / 1000;
-    ctx.fillStyle = age < 10 ? "#7fd4a8" : age < 120 ? "#3f7d97" : "#27455c";
-    ctx.fillRect(v.x - 1, v.y - 1, 2, 2);
-  }
-  requestAnimationFrame(drawFrame);
-}
-requestAnimationFrame(drawFrame);
-
-setInterval(() => {
-  rate = windowCount; windowCount = 0;
-  document.getElementById("rate").textContent = rate;
+  const src = map.getSource("vessels");
+  if (src) src.setData({ type: "FeatureCollection", features });
+  document.getElementById("rate").textContent = windowCount;
+  windowCount = 0;
   document.getElementById("total").textContent = total.toLocaleString();
   document.getElementById("vessels").textContent = seen.size.toLocaleString();
-}, 1000);
+}
+setInterval(refresh, 1000);
+
+map.on("click", "vessels", (e) => {
+  const p = e.features[0].properties;
+  const esc = (s) => String(s).replace(/[<>&]/g, "");
+  new maplibregl.Popup()
+    .setLngLat(e.features[0].geometry.coordinates)
+    .setHTML(
+      `<b>${esc(p.name) || "unnamed"}</b><br>` +
+      `MMSI ${esc(p.mmsi)}<br>` +
+      (p.sog !== "undefined" && p.sog != null ? `${esc(p.sog)} kn @ ${esc(p.cog)}&deg;<br>` : "") +
+      `${esc(p.type)} &middot; ${Math.round(p.age)}s ago`
+    )
+    .addTo(map);
+});
+map.on("mouseenter", "vessels", () => (map.getCanvas().style.cursor = "pointer"));
+map.on("mouseleave", "vessels", () => (map.getCanvas().style.cursor = ""));
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
@@ -102,15 +153,16 @@ function connect() {
     if (m.error) { status.textContent = "error: " + m.error; return; }
     total++; windowCount++;
     const md = m.MetaData || {};
-    if (typeof md.latitude === "number" && (md.latitude || md.longitude)) {
-      const [x, y] = project(md.latitude, md.longitude);
-      seen.set(md.MMSI, { x, y, t: performance.now() });
-    }
-    if (md.ShipName) {
-      document.getElementById("recent").innerHTML =
-        `latest with a name: <b>${md.ShipName.replace(/[<>&]/g, "")}</b> ` +
-        `(MMSI ${md.MMSI}) — ${m.MessageType}`;
-    }
+    if (typeof md.latitude !== "number" || (!md.latitude && !md.longitude)) return;
+    const prev = seen.get(md.MMSI) || {};
+    const pkt = m.Message ? m.Message[m.MessageType] || {} : {};
+    seen.set(md.MMSI, {
+      lon: md.longitude, lat: md.latitude, t: Date.now(),
+      name: md.ShipName || prev.name,
+      sog: typeof pkt.Sog === "number" && pkt.Sog < 102.3 ? pkt.Sog : prev.sog,
+      cog: typeof pkt.Cog === "number" && pkt.Cog < 360 ? pkt.Cog : prev.cog,
+      type: m.MessageType,
+    });
   };
   ws.onclose = () => { status.textContent = "disconnected — retrying in 3s"; setTimeout(connect, 3000); };
 }
