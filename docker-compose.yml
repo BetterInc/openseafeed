@@ -71,6 +71,11 @@ services:
     command: ["openseafeed-fanout"]
     environment:
       <<: *app-env
+      # Serve the live map from the bind mount below: edit web/live.html on
+      # the host, refresh the browser — no image rebuild.
+      OSF_LIVE_HTML: /app/web/live.html
+    volumes:
+      - ./web:/app/web:ro
     ports:
       - "127.0.0.1:8081:8081"         # HTTP: WS /v1/stream, /healthz
     depends_on:

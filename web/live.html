@@ -98,7 +98,8 @@ const map = new maplibregl.Map({
         filter: ["==", ["get", "moving"], 1],
         layout: {
           "icon-image": "arrow",
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.35, 8, 0.6, 12, 1.0],
+          // The source image is 48px; keep arrows at dot scale (~4-14px).
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.09, 8, 0.16, 12, 0.3],
           "icon-rotate": ["get", "rot"],
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,

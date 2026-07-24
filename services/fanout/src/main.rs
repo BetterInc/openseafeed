@@ -158,10 +158,21 @@ async fn main() -> anyhow::Result<()> {
     let router = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/stream", any(ws_stream))
-        // Live map: watch the stream fill in from a browser.
+        // Live map: watch the stream fill in from a browser. When
+        // OSF_LIVE_HTML points at a readable file (dev: the bind-mounted
+        // web/live.html) it is re-read on every request so edits only need a
+        // browser refresh; otherwise the copy embedded at compile time is
+        // served.
         .route(
             "/",
-            get(|| async { axum::response::Html(include_str!("../../../web/live.html")) }),
+            get(|| async {
+                let from_disk = std::env::var("OSF_LIVE_HTML")
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                axum::response::Html(
+                    from_disk.unwrap_or_else(|| include_str!("../../../web/live.html").to_string()),
+                )
+            }),
         )
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(&http_addr).await?;
