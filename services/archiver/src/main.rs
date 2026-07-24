@@ -7,6 +7,7 @@
 //! live on the S3 cold volume and simply read slower.
 
 mod ch;
+mod dma;
 mod history;
 mod schema;
 
@@ -25,33 +26,33 @@ const FLUSH_AGE: Duration = Duration::from_secs(5);
 const MAX_BUFFER: usize = 200_000;
 
 #[derive(Serialize, Clone)]
-struct PositionRow {
-    ts: String,
-    mmsi: u32,
-    msg_type: String,
-    lat: f64,
-    lon: f64,
-    sog: Option<f32>,
-    cog: Option<f32>,
-    heading: Option<u16>,
-    nav_status: Option<u8>,
-    station: String,
+pub(crate) struct PositionRow {
+    pub ts: String,
+    pub mmsi: u32,
+    pub msg_type: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub sog: Option<f32>,
+    pub cog: Option<f32>,
+    pub heading: Option<u16>,
+    pub nav_status: Option<u8>,
+    pub station: String,
 }
 
 #[derive(Serialize, Clone)]
-struct StaticRow {
-    ts: String,
-    mmsi: u32,
-    name: String,
-    call_sign: String,
-    imo: u32,
-    ship_type: u8,
-    destination: String,
-    draught: f32,
-    dim_a: u16,
-    dim_b: u16,
-    dim_c: u8,
-    dim_d: u8,
+pub(crate) struct StaticRow {
+    pub ts: String,
+    pub mmsi: u32,
+    pub name: String,
+    pub call_sign: String,
+    pub imo: u32,
+    pub ship_type: u8,
+    pub destination: String,
+    pub draught: f32,
+    pub dim_a: u16,
+    pub dim_b: u16,
+    pub dim_c: u8,
+    pub dim_d: u8,
 }
 
 #[tokio::main]
@@ -64,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let ch = Arc::new(ClickHouse::from_env());
+    let import_mode = std::env::args().nth(1).as_deref() == Some("import-dma");
     // Retry migrations until ClickHouse is up; the data plane must not
     // crash-loop just because history storage lags behind.
     loop {
@@ -74,6 +76,12 @@ async fn main() -> anyhow::Result<()> {
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
+    }
+
+    if import_mode {
+        // Separate worker mode: watch DMA's daily dump listing and backfill
+        // the archive. No NATS involvement at all.
+        return dma::run(ch, dma::Config::from_env()).await;
     }
 
     let nats_url =

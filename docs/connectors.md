@@ -98,6 +98,24 @@ header). `worker-aisstream.example.yaml` is likewise not wired in (needs
 The Denmark connector exits with code 2 and printed instructions if
 `OSF_DENMARK_ADDR` is unset.
 
+### Denmark history (no grant needed)
+
+Separately from the live stream, DMA publishes each day's full Danish AIS
+picture as a public CSV dump (`aisdk-YYYY-MM-DD.zip`, 500–900 MB, appearing
+~3 days behind) at http://aisdata.ais.dk/. The **history importer** is its
+own worker that polls that bucket and backfills new files straight into the
+ClickHouse archive with their original timestamps (station `import:dma`) —
+historical data never touches the live stream. Enable with:
+
+```sh
+docker compose --profile dma-history up -d
+```
+
+State lives in the `dma_imports` table, so it only ever downloads a file
+once; `OSF_DMA_BACKFILL_DAYS` (default 7) bounds the first run, and
+`OSF_DMA_ROWS_PER_SEC` (default 20000) throttles inserts so a backfill never
+starves the live archiver.
+
 Consuming a third-party aggregator's feed (e.g. aisstream.io) is subject to
 that provider's terms — the operator enabling the connector is responsible for
 having the right to contribute that data; its source is tagged

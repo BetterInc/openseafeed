@@ -293,10 +293,37 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Denmark HISTORY importer — separate worker that watches DMA's daily dump
+  # bucket (aisdata.ais.dk, each day published ~3 days later, 500-900 MB/file)
+  # and backfills the ClickHouse archive with original timestamps. Historical
+  # data deliberately never touches the live stream.
+  #   docker compose --profile dma-history up -d
+  dma-import:
+    build: .
+    image: openseafeed:dev
+    profiles: ["dma-history"]
+    command: ["openseafeed-archiver", "import-dma"]
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      OSF_CLICKHOUSE_URL: http://clickhouse:8123
+      OSF_CLICKHOUSE_DB: osf
+      OSF_CLICKHOUSE_USER: osf
+      OSF_CLICKHOUSE_PASSWORD: osf-dev
+      OSF_DMA_BACKFILL_DAYS: ${OSF_DMA_BACKFILL_DAYS:-7}
+      OSF_DMA_POLL_SECS: ${OSF_DMA_POLL_SECS:-3600}
+      OSF_DMA_ROWS_PER_SEC: ${OSF_DMA_ROWS_PER_SEC:-20000}
+    volumes:
+      - dma-tmp:/tmp
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   snapshots:
   control:
   clickhouse:
+  dma-tmp:
 
 configs:
   clickhouse-listen:

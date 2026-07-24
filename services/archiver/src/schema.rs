@@ -36,6 +36,17 @@ pub fn migrations(db: &str, hot_days: u32, retain_days: u32, tiered: bool) -> Ve
             ORDER BY (mmsi, ts)
             {ttl}"
         ),
+        // Bookkeeping for the DMA history importer: one row per fully
+        // imported dump file.
+        format!(
+            "CREATE TABLE IF NOT EXISTS {db}.dma_imports (
+                file        String,
+                rows        UInt64,
+                imported_at DateTime
+            )
+            ENGINE = ReplacingMergeTree(imported_at)
+            ORDER BY file"
+        ),
         // Latest static/voyage data per vessel; ReplacingMergeTree keeps the
         // newest row per MMSI after merges.
         format!(

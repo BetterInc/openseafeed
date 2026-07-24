@@ -16,6 +16,9 @@ async-nats.workspace = true
 axum.workspace = true
 futures.workspace = true
 chrono.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 openseafeed-feed.workspace = true
 openseafeed-keys = { path = "../../crates/keys" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+csv = "1"
+regex = "1"
