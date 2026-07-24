@@ -49,8 +49,11 @@
 </header>
 <div id="map"></div>
 <div id="legend">
-  <i style="background:#7fd4a8"></i>fresh (&lt;10 s)&ensp;
-  <i style="background:#3f7d97"></i>recent (&lt;2 min)&ensp;
+  <span style="color:#7fd4a8">&#9650;</span> under way (points along course)&ensp;
+  <i style="background:#7fd4a8"></i>stationary<br>
+  color = freshness:
+  <i style="background:#7fd4a8"></i>&lt;10 s&ensp;
+  <i style="background:#3f7d97"></i>&lt;2 min&ensp;
   <i style="background:#27455c"></i>older
 </div>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -81,15 +84,48 @@ const map = new maplibregl.Map({
       { id: "base", type: "raster", source: "base" },
       { id: "seamark", type: "raster", source: "seamark",
         layout: { visibility: "none" } },
+      // Stationary vessels: dots. Freshness: bright green fading toward
+      // the deep blue of the sea.
       { id: "vessels", type: "circle", source: "vessels",
+        filter: ["!=", ["get", "moving"], 1],
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.6, 8, 3.5, 12, 6],
-          // Freshness: bright green fading toward the deep blue of the sea.
           "circle-color": ["step", ["get", "age"], "#7fd4a8", 10, "#3f7d97", 120, "#27455c"],
           "circle-opacity": 0.95,
         } },
+      // Under-way vessels: arrows rotated to course over ground.
+      { id: "vessels-moving", type: "symbol", source: "vessels",
+        filter: ["==", ["get", "moving"], 1],
+        layout: {
+          "icon-image": "arrow",
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.35, 8, 0.6, 12, 1.0],
+          "icon-rotate": ["get", "rot"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+        paint: {
+          "icon-color": ["step", ["get", "age"], "#7fd4a8", 10, "#3f7d97", 120, "#27455c"],
+        } },
     ],
   },
+});
+
+// North-pointing arrow, generated at runtime as an SDF so icon-color tints
+// it per-vessel.
+map.on("load", () => {
+  const s = 48, c = document.createElement("canvas");
+  c.width = c.height = s;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff";
+  g.beginPath();
+  g.moveTo(s / 2, 5);        // tip
+  g.lineTo(s - 11, s - 8);   // starboard tail
+  g.lineTo(s / 2, s - 16);   // notch
+  g.lineTo(11, s - 8);       // port tail
+  g.closePath();
+  g.fill();
+  map.addImage("arrow", g.getImageData(0, 0, s, s), { sdf: true });
 });
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
 
@@ -104,11 +140,15 @@ function refresh() {
   const now = Date.now();
   const features = [];
   for (const [mmsi, v] of seen) {
+    // Under way = making way over ground with a usable direction; heading
+    // beats course when both exist (it's what the ship actually points at).
+    const rot = v.heading != null ? v.heading : v.cog;
+    const moving = v.sog != null && v.sog >= 0.5 && rot != null ? 1 : 0;
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [v.lon, v.lat] },
       properties: { mmsi, age: (now - v.t) / 1000, name: v.name || "",
-                    sog: v.sog, cog: v.cog, type: v.type },
+                    sog: v.sog, cog: v.cog, type: v.type, moving, rot: rot || 0 },
     });
   }
   const src = map.getSource("vessels");
@@ -120,21 +160,25 @@ function refresh() {
 }
 setInterval(refresh, 1000);
 
-map.on("click", "vessels", (e) => {
-  const p = e.features[0].properties;
-  const esc = (s) => String(s).replace(/[<>&]/g, "");
-  new maplibregl.Popup()
-    .setLngLat(e.features[0].geometry.coordinates)
-    .setHTML(
-      `<b>${esc(p.name) || "unnamed"}</b><br>` +
-      `MMSI ${esc(p.mmsi)}<br>` +
-      (p.sog !== "undefined" && p.sog != null ? `${esc(p.sog)} kn @ ${esc(p.cog)}&deg;<br>` : "") +
-      `${esc(p.type)} &middot; ${Math.round(p.age)}s ago`
-    )
-    .addTo(map);
-});
-map.on("mouseenter", "vessels", () => (map.getCanvas().style.cursor = "pointer"));
-map.on("mouseleave", "vessels", () => (map.getCanvas().style.cursor = ""));
+for (const layer of ["vessels", "vessels-moving"]) {
+  map.on("click", layer, (e) => {
+    const p = e.features[0].properties;
+    const esc = (s) => String(s).replace(/[<>&]/g, "");
+    new maplibregl.Popup()
+      .setLngLat(e.features[0].geometry.coordinates)
+      .setHTML(
+        `<b>${esc(p.name) || "unnamed"}</b><br>` +
+        `MMSI ${esc(p.mmsi)}<br>` +
+        (p.moving == 1
+          ? `${esc(p.sog)} kn, course ${Math.round(p.rot)}&deg;<br>`
+          : `stationary<br>`) +
+        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago`
+      )
+      .addTo(map);
+  });
+  map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
+  map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
+}
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
@@ -156,11 +200,14 @@ function connect() {
     if (typeof md.latitude !== "number" || (!md.latitude && !md.longitude)) return;
     const prev = seen.get(md.MMSI) || {};
     const pkt = m.Message ? m.Message[m.MessageType] || {} : {};
+    const heading = typeof pkt.TrueHeading === "number" && pkt.TrueHeading < 511
+      ? pkt.TrueHeading : undefined;
     seen.set(md.MMSI, {
       lon: md.longitude, lat: md.latitude, t: Date.now(),
       name: md.ShipName || prev.name,
       sog: typeof pkt.Sog === "number" && pkt.Sog < 102.3 ? pkt.Sog : prev.sog,
       cog: typeof pkt.Cog === "number" && pkt.Cog < 360 ? pkt.Cog : prev.cog,
+      heading: heading !== undefined ? heading : prev.heading,
       type: m.MessageType,
     });
   };
