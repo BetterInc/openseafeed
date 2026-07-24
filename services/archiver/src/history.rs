@@ -37,6 +37,10 @@ struct Params {
     /// RFC 3339; default: now.
     to: Option<DateTime<Utc>>,
     limit: Option<u32>,
+    /// Downsample to one point per `step` seconds (min 10). Essential for
+    /// long ranges: a year of a busy vessel raw is 100k+ points, but at
+    /// step=3600 it is ~8760.
+    step: Option<u32>,
 }
 
 async fn get_history(
@@ -56,19 +60,36 @@ async fn get_history(
     let limit = p.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     // All interpolated values are numerics or chrono-formatted timestamps —
     // no free-text reaches the SQL.
-    let sql = format!(
-        "SELECT ts, msg_type, lat, lon, sog, cog, heading, nav_status \
-         FROM {db}.positions \
-         WHERE mmsi = {mmsi} \
+    let range = format!(
+        "WHERE mmsi = {mmsi} \
            AND ts >= toDateTime64('{from}', 3) \
-           AND ts <= toDateTime64('{to}', 3) \
-         ORDER BY ts \
-         LIMIT {limit} \
-         FORMAT JSONEachRow",
-        db = state.ch.db,
+           AND ts <= toDateTime64('{to}', 3)",
         from = from.format("%Y-%m-%d %H:%M:%S%.3f"),
         to = to.format("%Y-%m-%d %H:%M:%S%.3f"),
     );
+    let sql = match p.step {
+        // Downsampled: first observation of each time bucket.
+        Some(step) => {
+            let step = step.max(10);
+            format!(
+                "SELECT toStartOfInterval(ts, INTERVAL {step} SECOND) AS ts, \
+                        argMin(msg_type, ts) AS msg_type, \
+                        argMin(lat, ts) AS lat, argMin(lon, ts) AS lon, \
+                        argMin(sog, ts) AS sog, argMin(cog, ts) AS cog, \
+                        argMin(heading, ts) AS heading, \
+                        argMin(nav_status, ts) AS nav_status \
+                 FROM {db}.positions {range} \
+                 GROUP BY ts ORDER BY ts LIMIT {limit} FORMAT JSONEachRow",
+                db = state.ch.db,
+            )
+        }
+        None => format!(
+            "SELECT ts, msg_type, lat, lon, sog, cog, heading, nav_status \
+             FROM {db}.positions {range} \
+             ORDER BY ts LIMIT {limit} FORMAT JSONEachRow",
+            db = state.ch.db,
+        ),
+    };
 
     match state.ch.exec(&sql, None).await {
         Ok(text) => {
