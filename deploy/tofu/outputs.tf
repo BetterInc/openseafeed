@@ -15,13 +15,13 @@ output "cluster_endpoint" {
 }
 
 output "cold_bucket_name" {
-  description = "ClickHouse cold-tier object storage bucket name"
-  value       = scaleway_object_bucket.ais_cold.name
+  description = "ClickHouse cold-tier Wasabi bucket name (created in the Wasabi console)"
+  value       = var.cold_bucket_name
 }
 
 output "cold_bucket_endpoint" {
-  description = "S3-compatible endpoint for the cold-tier bucket (use in clickhouse-storage ConfigMap)"
-  value       = "https://s3.${var.region}.scw.cloud/${scaleway_object_bucket.ais_cold.name}"
+  description = "Wasabi S3 endpoint + bucket path for the cold tier (use in clickhouse-storage ConfigMap)"
+  value       = "${var.cold_bucket_endpoint}/${var.cold_bucket_name}"
 }
 
 output "endpoints" {

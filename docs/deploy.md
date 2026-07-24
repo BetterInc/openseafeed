@@ -88,6 +88,10 @@ Notes:
 - **Ingest LBs.** Mixed-protocol LoadBalancers are not portable, so ingest UDP
   (`ingest-udp`) and TCP (`ingest-tcp`) are two separate LoadBalancer Services;
   the HTTP port is a plain ClusterIP.
+- **No public UDP on Kapsule.** The Scaleway LoadBalancer does not support UDP,
+  so `ingest-udp` gets no external IP on Kapsule — this is expected. Anonymous
+  UDP ingest is a dev/LAN convenience only; keep it off in prod
+  (`OSF_ALLOW_ANON_UDP=0`). Remote feeds use authenticated TCP/WSS instead.
 - **Stateful single writers.** snapshotter and control each own a PVC and run
   one replica with the `Recreate` strategy. pipeline and fanout scale freely
   (NATS queue group); fanout is the HPA target (70% CPU, 2–10 replicas).
@@ -127,20 +131,37 @@ credentials.
 - **Columnar + heavy compression.** AIS is a firehose of narrow, repetitive
   rows; ClickHouse gets 10–20x compression, which is what makes a year of
   history affordable.
-- **Native tiered storage.** Parts age from the local (hot) disk to an
-  S3-compatible bucket via `TTL ... TO VOLUME 'cold'`, and the *same* table
+- **Native tiered storage.** Parts age from the local (hot) disk to a Wasabi
+  (S3-compatible) bucket via `TTL ... TO VOLUME 'cold'`, and the *same* table
   stays queryable across both tiers — cold reads are just slower.
-- **Lifecycle.** Hot on local disk for 14 days, then moved to S3 cold (still
-  queryable), then `TTL ... DELETE` at 1 year. These TTLs are part of the
-  archiver's schema, not the deploy.
+- **Lifecycle.** Hot on local disk for 14 days, then moved to Wasabi cold
+  (still queryable), then `TTL ... DELETE` at 1 year. These TTLs are part of
+  the archiver's schema, not the deploy.
+
+Object storage is on **Wasabi**, a separate S3-compatible provider (compute is
+on Scaleway; storage is not). Two Wasabi specifics matter here:
+
+- **No egress fees.** ClickHouse re-reads cold parts every time a historical
+  query touches aged data, so a provider that charges per-GB egress would make
+  history queries expensive. Wasabi's flat **~$7/TB/month** (1 TB minimum)
+  covers a year of AIS history with no egress surprises.
+- **90-day minimum storage billing is a non-issue.** Wasabi bills any object
+  for at least 90 days even if deleted sooner; our cold parts live ~350 days
+  (moved at 14 days, deleted at the 1-year TTL) — well past the minimum — so we
+  never pay for storage we didn't use.
 
 ### Tiers
 
 ```
 insert -> hot volume (local PVC, 14 days)
-       -> cold volume (S3 bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 14d]
-       -> deleted                                     [TTL ... DELETE @ 1y]
+       -> cold volume (Wasabi bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 14d]
+       -> deleted                                         [TTL ... DELETE @ 1y]
 ```
+
+If deep-history queries become frequent, add a **local read cache** to the S3
+disk (ClickHouse `cache` disk type layered over the Wasabi disk): recently
+fetched cold parts are then served from the hot NVMe on repeat queries. One
+config block in the same storage ConfigMap; not enabled by default.
 
 ### Rough sizing
 
@@ -149,19 +170,22 @@ At ~1k msg/s the network produces roughly:
 - 1,000 msg/s × 86,400 s ≈ **86M rows/day**
 - After ClickHouse compression, ≈ **~2 GB/day** on the hot disk
 - 14-day hot window ≈ **~28 GB** local (the 100Gi PVC leaves generous headroom)
-- Cold tier grows ~2 GB/day in S3; a year ≈ **~730 GB**, which on Scaleway
-  Object Storage is a few euros/month — small next to the compute.
+- Cold tier grows ~2 GB/day in Wasabi; a year ≈ **~730 GB**, comfortably inside
+  Wasabi's 1 TB minimum at ~$7/month — small next to the compute.
 
-### Enabling the S3 cold tier
+### Enabling the Wasabi cold tier
 
 Off by default (local-only). To turn it on:
 
-1. Provision the bucket with OpenTofu (`scaleway_object_bucket.ais_cold`, default
-   name `openseafeed-ais-cold`); grab `tofu output cold_bucket_endpoint`.
+1. Create the bucket in the **Wasabi console** (it is intentionally not managed
+   by OpenTofu — we don't hand tofu Wasabi root keys). `tofu output
+   cold_bucket_endpoint` prints the endpoint/bucket path for reference; adjust
+   `cold_bucket_endpoint`/`cold_bucket_name` vars for your region if needed.
 2. Fill the placeholders in the `clickhouse-storage` ConfigMap
-   (`deploy/k8s/base/clickhouse.yaml`): `<S3_ENDPOINT>`, `<S3_ACCESS_KEY>`,
-   `<S3_SECRET_KEY>`. Inject the credentials from your secrets tooling — do
-   not commit them.
+   (`deploy/k8s/base/clickhouse.yaml`): `<WASABI_ENDPOINT>`,
+   `<WASABI_ACCESS_KEY>`, `<WASABI_SECRET_KEY>` (Wasabi keys go in
+   `openseafeed-secrets` as `OSF_WASABI_ACCESS_KEY` / `OSF_WASABI_SECRET_KEY`).
+   Inject the credentials from your secrets tooling — do not commit them.
 3. Uncomment the `storage-config` volume + volumeMount in the ClickHouse
    StatefulSet and re-apply. The `hot_cold` storage policy then becomes
    available for the archiver's `TTL ... TO VOLUME 'cold'` rules.

@@ -34,10 +34,18 @@ variable "region" {
   default     = "fr-par"
 }
 
+# Cold-tier object storage lives on Wasabi (created in the Wasabi console, not
+# managed here — see storage.tf). These are for reference/outputs only.
 variable "cold_bucket_name" {
-  description = "Scaleway Object Storage bucket for the ClickHouse cold tier"
+  description = "Wasabi bucket for the ClickHouse cold tier"
   type        = string
   default     = "openseafeed-ais-cold"
+}
+
+variable "cold_bucket_endpoint" {
+  description = "Wasabi S3 endpoint for the cold-tier bucket's region"
+  type        = string
+  default     = "https://s3.eu-central-2.wasabisys.com"
 }
 
 variable "zone" {
