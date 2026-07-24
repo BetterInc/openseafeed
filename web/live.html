@@ -98,8 +98,9 @@ const map = new maplibregl.Map({
         filter: ["==", ["get", "moving"], 1],
         layout: {
           "icon-image": "arrow",
-          // The source image is 48px; keep arrows at dot scale (~4-14px).
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.09, 8, 0.16, 12, 0.3],
+          // The source image is 48px; arrows run ~2x the dot size so
+          // under-way traffic clearly stands out from anchored bullets.
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.15, 8, 0.28, 12, 0.45],
           "icon-rotate": ["get", "rot"],
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
