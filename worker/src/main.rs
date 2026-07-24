@@ -1,5 +1,6 @@
 mod backoff;
 mod cli;
+mod finland;
 mod ingest;
 mod pump;
 mod queue;
@@ -34,6 +35,12 @@ async fn main() -> Result<()> {
 }
 
 async fn run_connect(args: ConnectArgs) -> Result<()> {
+    // Denmark without a configured endpoint is a documented "come back once
+    // you have access" case, not a generic error: exit 2 with instructions.
+    if args.upstream == "denmark" && std::env::var_os(cli::DENMARK_ADDR_ENV).is_none() {
+        eprintln!("{}", cli::DENMARK_HELP);
+        std::process::exit(2);
+    }
     let upstream = cli::parse_upstream(&args.upstream)?;
     let target = cli::parse_ingest(&args.sink.ingest)?;
     let key = require_key(&args.sink, &target)?;

@@ -67,7 +67,18 @@ pub struct SinkArgs {
 pub enum Upstream {
     Tcp { host: String, port: u16 },
     Ws { url: String },
+    /// Digitraffic marine AIS (MQTT over WebSocket).
+    Finland,
 }
+
+/// Env var naming the DMA-granted TCP endpoint for the `denmark` preset.
+pub const DENMARK_ADDR_ENV: &str = "OSF_DENMARK_ADDR";
+
+/// Shown when `denmark` is requested without a configured endpoint.
+pub const DENMARK_HELP: &str = "denmark: DMA's live AIS stream has no public endpoint; \
+access is granted per user. Request it at \
+https://www.dma.dk/safety-at-sea/navigational-information/ais-data, then set \
+OSF_DENMARK_ADDR=tcp://host:port and rerun.";
 
 /// A validated OpenSeaFeed ingest target.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,12 +100,11 @@ pub fn parse_upstream(s: &str) -> Result<Upstream> {
             host: "153.44.253.27".to_string(),
             port: 5631,
         }),
-        "denmark" => {
-            bail!("preset 'denmark' not yet supported, needs its AISHub HTTP stream protocol")
-        }
-        "finland" => {
-            bail!("preset 'finland' not yet supported, needs its Digitraffic MQTT protocol")
-        }
+        "finland" => Ok(Upstream::Finland),
+        "denmark" => match std::env::var(DENMARK_ADDR_ENV) {
+            Ok(addr) => parse_upstream(&addr),
+            Err(_) => bail!("{DENMARK_HELP}"),
+        },
         _ => {
             if let Some(rest) = s.strip_prefix("tcp://") {
                 let (host, port) = split_host_port(rest)?;
@@ -173,11 +183,27 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_presets_explain_why() {
+    fn finland_preset_resolves() {
+        assert_eq!(parse_upstream("finland").unwrap(), Upstream::Finland);
+    }
+
+    #[test]
+    fn denmark_preset_follows_env() {
+        // Unset: error that explains how to request DMA access.
+        std::env::remove_var(DENMARK_ADDR_ENV);
         let e = parse_upstream("denmark").unwrap_err().to_string();
-        assert!(e.contains("not yet supported"), "{e}");
-        let e = parse_upstream("finland").unwrap_err().to_string();
-        assert!(e.contains("not yet supported"), "{e}");
+        assert!(e.contains("dma.dk"), "{e}");
+
+        // Set to a TCP endpoint: behaves like a raw tcp:// upstream.
+        std::env::set_var(DENMARK_ADDR_ENV, "tcp://ais.example.dk:4001");
+        assert_eq!(
+            parse_upstream("denmark").unwrap(),
+            Upstream::Tcp {
+                host: "ais.example.dk".to_string(),
+                port: 4001
+            }
+        );
+        std::env::remove_var(DENMARK_ADDR_ENV);
     }
 
     #[test]

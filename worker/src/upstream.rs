@@ -23,6 +23,7 @@ pub async fn run_network(up: Upstream, queue: Arc<LineQueue>, stats: Arc<Stats>)
                 read_tcp(host, *port, &queue, &stats, &mut backoff).await
             }
             Upstream::Ws { url } => read_ws(url, &queue, &stats, &mut backoff).await,
+            Upstream::Finland => crate::finland::read(&queue, &stats, &mut backoff).await,
         };
         match outcome {
             Ok(()) => tracing::warn!("upstream closed the connection, reconnecting"),
