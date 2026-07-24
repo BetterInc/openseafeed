@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# OpenSeaFeed — single image, all six service binaries.
+# OpenSeaFeed — single image, all service binaries.
 #
 # Every service is a binary in the same Cargo workspace, so we build the whole
 # workspace once and copy all binaries into a slim runtime image. Each
@@ -44,6 +44,7 @@ COPY --from=builder /app/target/release/openseafeed-pipeline    /usr/local/bin/
 COPY --from=builder /app/target/release/openseafeed-fanout      /usr/local/bin/
 COPY --from=builder /app/target/release/openseafeed-snapshotter /usr/local/bin/
 COPY --from=builder /app/target/release/openseafeed-control     /usr/local/bin/
+COPY --from=builder /app/target/release/openseafeed-archiver    /usr/local/bin/
 COPY --from=builder /app/target/release/openseafeed-worker      /usr/local/bin/
 
 USER osf

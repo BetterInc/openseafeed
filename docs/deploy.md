@@ -23,6 +23,8 @@ make dev-down   # tear down (named volumes are kept)
 | fanout       | 8081                             | live WS `/v1/stream`, `/healthz` |
 | snapshotter  | 8082                             | `/v1/snapshot`, `/v1/vessels/{mmsi}`, `/healthz` |
 | control      | 8083                             | accounts, OAuth, API keys, `/healthz` |
+| archiver     | 8084                             | NATS -> ClickHouse batch insert; HTTP: `/healthz` |
+| clickhouse   | 8123                             | columnar history store (HTTP interface) |
 
 Replay a recorded NMEA file into the local ingest:
 
@@ -47,6 +49,7 @@ receivers / partner feeds / gov feeds
   -> pipeline      (decode -> validate -> dedupe; ais.decoded.<geohash>)
   -> fanout        (live WebSocket, bbox/MMSI filters)
   -> snapshotter   (periodic full-fleet snapshot on a volume)
+  -> archiver      (batch-insert ais.decoded.> into ClickHouse for history)
 control serves accounts/OAuth/API keys alongside.
 ```
 
@@ -56,7 +59,7 @@ All services read `OSF_NATS_URL` (compose/k8s: `nats://nats:4222`). Common env:
 
 ## Container image
 
-One image (`Dockerfile`) holds all six binaries; each deployment picks its
+One image (`Dockerfile`) holds all service binaries; each deployment picks its
 binary via `command`. It is multi-stage (cargo-chef for dependency caching,
 `debian:bookworm-slim` runtime) and CI publishes it to
 `ghcr.io/openseafeed/openseafeed` (`:latest` and `:<git-sha>` on `main`,
@@ -98,12 +101,65 @@ Applied out-of-band from `deploy/k8s/base/secret.example.yaml` into the
 | `OSF_GOOGLE_CLIENT_ID`     | control   | Google OAuth client id |
 | `OSF_GOOGLE_CLIENT_SECRET` | control   | Google OAuth client secret |
 | `OSF_FEED_KEY_NORWAY`      | worker    | feed key the Norway worker presents to ingest |
+| `OSF_CLICKHOUSE_PASSWORD`  | clickhouse, archiver | password for the ClickHouse `osf` user |
 
 ```sh
 cp deploy/k8s/base/secret.example.yaml deploy/k8s/base/secret.yaml
 # fill in real values (secret.yaml is gitignored)
 kubectl -n openseafeed apply -f deploy/k8s/base/secret.yaml
 ```
+
+## History storage
+
+Long-term AIS history lives in **ClickHouse**, fed by the `archiver` service
+(consumes `ais.decoded.>` from NATS, batch-inserts over the HTTP interface on
+:8123). The archiver applies its own schema migrations at startup, so the
+deploy only has to provide a running ClickHouse with a database (`osf`) and
+credentials.
+
+### Why ClickHouse (not TimescaleDB)
+
+- **Columnar + heavy compression.** AIS is a firehose of narrow, repetitive
+  rows; ClickHouse gets 10–20x compression, which is what makes a year of
+  history affordable.
+- **Native tiered storage.** Parts age from the local (hot) disk to an
+  S3-compatible bucket via `TTL ... TO VOLUME 'cold'`, and the *same* table
+  stays queryable across both tiers — cold reads are just slower.
+- **Lifecycle.** Hot on local disk for 14 days, then moved to S3 cold (still
+  queryable), then `TTL ... DELETE` at 1 year. These TTLs are part of the
+  archiver's schema, not the deploy.
+
+### Tiers
+
+```
+insert -> hot volume (local PVC, 14 days)
+       -> cold volume (S3 bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 14d]
+       -> deleted                                     [TTL ... DELETE @ 1y]
+```
+
+### Rough sizing
+
+At ~1k msg/s the network produces roughly:
+
+- 1,000 msg/s × 86,400 s ≈ **86M rows/day**
+- After ClickHouse compression, ≈ **~2 GB/day** on the hot disk
+- 14-day hot window ≈ **~28 GB** local (the 100Gi PVC leaves generous headroom)
+- Cold tier grows ~2 GB/day in S3; a year ≈ **~730 GB**, which on Scaleway
+  Object Storage is a few euros/month — small next to the compute.
+
+### Enabling the S3 cold tier
+
+Off by default (local-only). To turn it on:
+
+1. Provision the bucket with OpenTofu (`scaleway_object_bucket.ais_cold`, default
+   name `openseafeed-ais-cold`); grab `tofu output cold_bucket_endpoint`.
+2. Fill the placeholders in the `clickhouse-storage` ConfigMap
+   (`deploy/k8s/base/clickhouse.yaml`): `<S3_ENDPOINT>`, `<S3_ACCESS_KEY>`,
+   `<S3_SECRET_KEY>`. Inject the credentials from your secrets tooling — do
+   not commit them.
+3. Uncomment the `storage-config` volume + volumeMount in the ClickHouse
+   StatefulSet and re-apply. The `hot_cold` storage policy then becomes
+   available for the archiver's `TTL ... TO VOLUME 'cold'` rules.
 
 ## Cluster provisioning (OpenTofu / Scaleway)
 

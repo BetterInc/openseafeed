@@ -34,6 +34,12 @@ variable "region" {
   default     = "fr-par"
 }
 
+variable "cold_bucket_name" {
+  description = "Scaleway Object Storage bucket for the ClickHouse cold tier"
+  type        = string
+  default     = "openseafeed-ais-cold"
+}
+
 variable "zone" {
   description = "Scaleway zone within the region"
   type        = string

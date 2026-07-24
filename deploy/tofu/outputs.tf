@@ -14,6 +14,16 @@ output "cluster_endpoint" {
   value       = scaleway_k8s_cluster.this.apiserver_url
 }
 
+output "cold_bucket_name" {
+  description = "ClickHouse cold-tier object storage bucket name"
+  value       = scaleway_object_bucket.ais_cold.name
+}
+
+output "cold_bucket_endpoint" {
+  description = "S3-compatible endpoint for the cold-tier bucket (use in clickhouse-storage ConfigMap)"
+  value       = "https://s3.${var.region}.scw.cloud/${scaleway_object_bucket.ais_cold.name}"
+}
+
 output "endpoints" {
   description = "Public hostnames served by the platform"
   value = {

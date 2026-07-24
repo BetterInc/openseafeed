@@ -133,6 +133,55 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: osf
+      CLICKHOUSE_USER: osf
+      CLICKHOUSE_PASSWORD: osf-dev
+    ulimits:
+      # ClickHouse opens many files; the image warns/underperforms below this.
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "127.0.0.1:8123:8123"   # HTTP interface
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  archiver:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-archiver"]
+    environment:
+      <<: *app-env
+      OSF_HTTP_ADDR: 0.0.0.0:8084
+      OSF_CLICKHOUSE_URL: http://clickhouse:8123
+      OSF_CLICKHOUSE_DB: osf
+      OSF_CLICKHOUSE_USER: osf
+      OSF_CLICKHOUSE_PASSWORD: osf-dev
+    ports:
+      - "127.0.0.1:8084:8084"   # HTTP: /healthz
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   # Opt-in: pulls Norway's open government AIS feed and pushes it to ingest.
   #   docker compose --profile feeds up -d norway-feed
   norway-feed:
@@ -158,3 +207,4 @@ services:
 volumes:
   snapshots:
   control:
+  clickhouse:

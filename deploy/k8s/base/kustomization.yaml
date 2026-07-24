@@ -18,6 +18,8 @@ resources:
   - fanout.yaml
   - snapshotter.yaml
   - control.yaml
+  - clickhouse.yaml
+  - archiver.yaml
   - worker-norway.yaml
   - pdb.yaml
 

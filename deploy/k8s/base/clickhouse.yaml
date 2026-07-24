@@ -1,0 +1,143 @@
+# ClickHouse — columnar history store for the archiver.
+# Single replica with a large local PVC for the hot tier. The archiver applies
+# its own schema migrations at startup, so all we provide here is a running
+# server with a database + credentials.
+#
+# S3 tiered storage (cold tier) is OPTIONAL and OFF by default. To enable it,
+# mount the `clickhouse-storage` ConfigMap below into config.d and supply the
+# endpoint/credentials — see the commented block in the StatefulSet and the
+# "History storage" section of docs/deploy.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-storage
+  labels:
+    app: clickhouse
+data:
+  # Storage policy that keeps recent parts on the local disk and moves aged
+  # parts (via TTL ... TO VOLUME 'cold' in the archiver's schema) to S3.
+  # Placeholders MUST be filled per-cluster before mounting this file:
+  #   <S3_ENDPOINT>  e.g. https://s3.fr-par.scw.cloud/openseafeed-ais-cold/ch/
+  #   <S3_ACCESS_KEY> / <S3_SECRET_KEY> — inject from openseafeed-secrets, do
+  #   NOT hardcode. Prefer templating this file through your secrets tooling.
+  storage.xml: |
+    <clickhouse>
+      <storage_configuration>
+        <disks>
+          <s3_cold>
+            <type>s3</type>
+            <endpoint><S3_ENDPOINT></endpoint>
+            <access_key_id><S3_ACCESS_KEY></access_key_id>
+            <secret_access_key><S3_SECRET_KEY></secret_access_key>
+          </s3_cold>
+        </disks>
+        <policies>
+          <hot_cold>
+            <volumes>
+              <hot>
+                <disk>default</disk>
+              </hot>
+              <cold>
+                <disk>s3_cold</disk>
+                <prefer_not_to_merge>true</prefer_not_to_merge>
+              </cold>
+            </volumes>
+          </hot_cold>
+        </policies>
+      </storage_configuration>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    app: clickhouse
+spec:
+  type: ClusterIP
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+    - name: native
+      port: 9000
+      targetPort: native
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  labels:
+    app: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.8-alpine
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            - name: CLICKHOUSE_DB
+              value: osf
+            - name: CLICKHOUSE_USER
+              value: osf
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_CLICKHOUSE_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          # ClickHouse opens many files under load.
+          # (Node must allow it; on managed clusters this is usually fine.)
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            # --- Enable S3 cold tier: uncomment after filling storage.xml ---
+            # - name: storage-config
+            #   mountPath: /etc/clickhouse-server/config.d/storage.xml
+            #   subPath: storage.xml
+      # volumes:
+      #   - name: storage-config
+      #     configMap:
+      #       name: clickhouse-storage
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Gi
