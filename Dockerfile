@@ -20,13 +20,24 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ---- builder: compile deps (cached), then the workspace ------------------
+# Two cache levels: cargo-chef gives layer-level dependency caching (works in
+# CI), and BuildKit cache mounts persist cargo's incremental target/ across
+# local builds — so a source edit only recompiles the crates it touched
+# instead of the whole workspace.
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-# Build & cache dependencies only. This layer is reused until Cargo deps change.
-RUN cargo chef cook --release --recipe-path recipe.json
-# Now copy the full source and build the actual binaries.
+RUN --mount=type=cache,target=/app/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --workspace
+RUN --mount=type=cache,target=/app/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --release --workspace \
+    && mkdir -p /out \
+    && cp target/release/openseafeed-ingest target/release/openseafeed-pipeline \
+          target/release/openseafeed-fanout target/release/openseafeed-snapshotter \
+          target/release/openseafeed-control target/release/openseafeed-archiver \
+          target/release/openseafeed-worker /out/
 
 # ---- runtime: slim image with just the binaries --------------------------
 FROM debian:bookworm-slim AS runtime
@@ -42,13 +53,13 @@ RUN useradd --system --uid 10001 --user-group --home /app osf \
     && chown -R osf:osf /data
 WORKDIR /app
 
-COPY --from=builder /app/target/release/openseafeed-ingest      /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-pipeline    /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-fanout      /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-snapshotter /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-control     /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-archiver    /usr/local/bin/
-COPY --from=builder /app/target/release/openseafeed-worker      /usr/local/bin/
+COPY --from=builder /out/openseafeed-ingest      /usr/local/bin/
+COPY --from=builder /out/openseafeed-pipeline    /usr/local/bin/
+COPY --from=builder /out/openseafeed-fanout      /usr/local/bin/
+COPY --from=builder /out/openseafeed-snapshotter /usr/local/bin/
+COPY --from=builder /out/openseafeed-control     /usr/local/bin/
+COPY --from=builder /out/openseafeed-archiver    /usr/local/bin/
+COPY --from=builder /out/openseafeed-worker      /usr/local/bin/
 
 USER osf
 
