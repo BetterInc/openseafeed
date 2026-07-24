@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSeaFeed — live</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0b1420; color: #cfe3f5; font: 14px/1.45 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: baseline;
+           padding: .7rem 1rem; border-bottom: 1px solid #1d3242; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
+  .stat b { color: #fff; font-variant-numeric: tabular-nums; }
+  .stat span { color: #7f9ab0; }
+  #controls { margin-left: auto; display: flex; gap: .5rem; }
+  input { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f; border-radius: 4px;
+          padding: .25rem .5rem; width: 15rem; font: inherit; }
+  button { background: #14532d; color: #d6ffe4; border: 1px solid #1f7a44; border-radius: 4px;
+           padding: .25rem .9rem; font: inherit; cursor: pointer; }
+  button:hover { background: #1a6b3a; }
+  #wrap { padding: 1rem; }
+  canvas { width: 100%; aspect-ratio: 2 / 1; background: #0e1b2a; border: 1px solid #1d3242;
+           border-radius: 6px; display: block; }
+  #recent { padding: 0 1rem 1rem; color: #7f9ab0; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; }
+  #recent b { color: #cfe3f5; font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPENSEAFEED LIVE</h1>
+  <div class="stat"><b id="rate">0</b> <span>msg/s</span></div>
+  <div class="stat"><b id="total">0</b> <span>messages</span></div>
+  <div class="stat"><b id="vessels">0</b> <span>vessels seen</span></div>
+  <div class="stat"><span id="status">disconnected</span></div>
+  <div id="controls">
+    <input id="key" value="osf_live_devdevdev" title="API key">
+    <button id="go">connect</button>
+  </div>
+</header>
+<div id="wrap"><canvas id="map" width="1920" height="960"></canvas></div>
+<div id="recent"></div>
+<script>
+"use strict";
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+const seen = new Map();          // mmsi -> {x, y, t}
+let total = 0, windowCount = 0, rate = 0;
+let ws = null;
+
+function project(lat, lon) {
+  return [ (lon + 180) / 360 * canvas.width,
+           (90 - lat) / 180 * canvas.height ];
+}
+
+function drawFrame() {
+  ctx.fillStyle = "#0e1b2a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // graticule
+  ctx.strokeStyle = "#16283a";
+  ctx.beginPath();
+  for (let lon = -150; lon < 180; lon += 30) {
+    const [x] = project(0, lon); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+  }
+  for (let lat = -60; lat < 90; lat += 30) {
+    const [, y] = project(lat, 0); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+  }
+  ctx.stroke();
+  // vessels: recent = bright green, older fade to blue-grey
+  const now = performance.now();
+  for (const v of seen.values()) {
+    const age = (now - v.t) / 1000;
+    ctx.fillStyle = age < 10 ? "#7fd4a8" : age < 120 ? "#3f7d97" : "#27455c";
+    ctx.fillRect(v.x - 1, v.y - 1, 2, 2);
+  }
+  requestAnimationFrame(drawFrame);
+}
+requestAnimationFrame(drawFrame);
+
+setInterval(() => {
+  rate = windowCount; windowCount = 0;
+  document.getElementById("rate").textContent = rate;
+  document.getElementById("total").textContent = total.toLocaleString();
+  document.getElementById("vessels").textContent = seen.size.toLocaleString();
+}, 1000);
+
+function connect() {
+  if (ws) { ws.onclose = null; ws.close(); }
+  const status = document.getElementById("status");
+  ws = new WebSocket(`ws://${location.host}/v1/stream`);
+  status.textContent = "connecting…";
+  ws.onopen = () => {
+    status.textContent = "streaming";
+    ws.send(JSON.stringify({
+      APIKey: document.getElementById("key").value.trim(),
+      BoundingBoxes: [[[-90, -180], [90, 180]]],
+    }));
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.error) { status.textContent = "error: " + m.error; return; }
+    total++; windowCount++;
+    const md = m.MetaData || {};
+    if (typeof md.latitude === "number" && (md.latitude || md.longitude)) {
+      const [x, y] = project(md.latitude, md.longitude);
+      seen.set(md.MMSI, { x, y, t: performance.now() });
+    }
+    if (md.ShipName) {
+      document.getElementById("recent").innerHTML =
+        `latest with a name: <b>${md.ShipName.replace(/[<>&]/g, "")}</b> ` +
+        `(MMSI ${md.MMSI}) — ${m.MessageType}`;
+    }
+  };
+  ws.onclose = () => { status.textContent = "disconnected — retrying in 3s"; setTimeout(connect, 3000); };
+}
+document.getElementById("go").onclick = connect;
+connect();
+</script>
+</body>
+</html>

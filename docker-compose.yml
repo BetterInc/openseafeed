@@ -241,54 +241,57 @@ services:
     restart: unless-stopped
 
   # Denmark — requires a per-user upstream address granted by DMA. Uncomment
-  # and set OSF_DENMARK_ADDR + OSF_FEED_KEY_DENMARK to enable.
-  #   docker compose --profile feeds up -d denmark-feed
-  # denmark-feed:
-  #   build: .
-  #   image: openseafeed:dev
-  #   profiles: ["feeds"]
-  #   command:
-  #     - openseafeed-worker
-  #     - connect
-  #     - --upstream
-  #     - denmark
-  #     - --ingest
-  #     - tcp://ingest:10111
-  #     - --key
-  #     - ${OSF_FEED_KEY_DENMARK:-osf_stn_devdevdev}
-  #   environment:
-  #     RUST_LOG: ${RUST_LOG:-info}
-  #     OSF_DENMARK_ADDR: ${OSF_DENMARK_ADDR:?set to the tcp://host:port DMA granted you}
-  #   depends_on:
-  #     ingest:
-  #       condition: service_healthy
-  #   restart: unless-stopped
+  # Put OSF_DENMARK_ADDR + OSF_FEED_KEY_DENMARK in .env, then:
+  #   docker compose --profile denmark up -d
+  denmark-feed:
+    build: .
+    image: openseafeed:dev
+    profiles: ["denmark"]
+    command:
+      - openseafeed-worker
+      - connect
+      - --upstream
+      - denmark
+      - --ingest
+      - tcp://ingest:10111
+      - --key
+      - ${OSF_FEED_KEY_DENMARK:-osf_stn_devdevdev}
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      # The worker exits with instructions if this is unset (see .env.example).
+      OSF_DENMARK_ADDR: ${OSF_DENMARK_ADDR:-}
+    depends_on:
+      ingest:
+        condition: service_healthy
+    restart: unless-stopped
 
   # aisstream.io — third-party aggregator. Requires your aisstream.io API key
-  # (OSF_AISSTREAM_KEY) in addition to your own feed key. Uncomment to enable.
+  # (OSF_AISSTREAM_KEY in .env) in addition to your own feed key.
   # NOTE: contributing a third-party aggregator's feed is subject to that
   # provider's terms — you are responsible for having the right to do so.
-  #   docker compose --profile feeds up -d aisstream-feed
-  # aisstream-feed:
-  #   build: .
-  #   image: openseafeed:dev
-  #   profiles: ["feeds"]
-  #   command:
-  #     - openseafeed-worker
-  #     - connect
-  #     - --upstream
-  #     - aisstream
-  #     - --ingest
-  #     - tcp://ingest:10111
-  #     - --key
-  #     - ${OSF_FEED_KEY_AISSTREAM:-osf_stn_devdevdev}
-  #   environment:
-  #     RUST_LOG: ${RUST_LOG:-info}
-  #     OSF_AISSTREAM_KEY: ${OSF_AISSTREAM_KEY:?set to your aisstream.io API key}
-  #   depends_on:
-  #     ingest:
-  #       condition: service_healthy
-  #   restart: unless-stopped
+  # Put OSF_AISSTREAM_KEY in .env, then:
+  #   docker compose --profile aisstream up -d
+  aisstream-feed:
+    build: .
+    image: openseafeed:dev
+    profiles: ["aisstream"]
+    command:
+      - openseafeed-worker
+      - connect
+      - --upstream
+      - aisstream
+      - --ingest
+      - tcp://ingest:10111
+      - --key
+      - ${OSF_FEED_KEY_AISSTREAM:-osf_stn_devdevdev}
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      # The worker exits with instructions if this is unset (see .env.example).
+      OSF_AISSTREAM_KEY: ${OSF_AISSTREAM_KEY:-}
+    depends_on:
+      ingest:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   snapshots:

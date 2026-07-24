@@ -158,6 +158,11 @@ async fn main() -> anyhow::Result<()> {
     let router = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/stream", any(ws_stream))
+        // Live map: watch the stream fill in from a browser.
+        .route(
+            "/",
+            get(|| async { axum::response::Html(include_str!("../../../web/live.html")) }),
+        )
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(&http_addr).await?;
     tracing::info!(http_addr, "fanout listening");
