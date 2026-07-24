@@ -1,0 +1,3 @@
+# Real secrets are applied out-of-band; never commit them.
+# Copy secret.example.yaml -> secret.yaml and fill in real values.
+secret.yaml

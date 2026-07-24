@@ -1,0 +1,29 @@
+[package]
+name = "openseafeed-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Control plane: accounts, API keys, tiers, and the station registry"
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+axum.workspace = true
+chrono.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rand = "0.8"
+hex = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+urlencoding = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

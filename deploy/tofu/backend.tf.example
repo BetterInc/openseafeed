@@ -1,0 +1,21 @@
+# Remote state on Scaleway Object Storage (S3-compatible).
+#
+# Copy to backend.tf and run `tofu init`. Create the bucket first:
+#   scw object bucket create name=openseafeed-tofu-state region=fr-par
+#
+# Auth uses the same Scaleway access/secret keys as the provider, passed as the
+# AWS-compatible env vars:
+#   export AWS_ACCESS_KEY_ID=$SCW_ACCESS_KEY
+#   export AWS_SECRET_ACCESS_KEY=$SCW_SECRET_KEY
+terraform {
+  backend "s3" {
+    bucket                      = "openseafeed-tofu-state"
+    key                         = "kapsule/terraform.tfstate"
+    region                      = "fr-par"
+    endpoints                   = { s3 = "https://s3.fr-par.scw.cloud" }
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_s3_checksum            = true
+  }
+}

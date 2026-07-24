@@ -5,6 +5,13 @@ members = [
     "crates/ais",
     "crates/feed",
     "crates/geo",
+    "crates/keys",
+    "services/ingest",
+    "services/pipeline",
+    "services/fanout",
+    "services/snapshotter",
+    "services/control",
+    "worker",
 ]
 
 [workspace.package]
@@ -25,6 +32,11 @@ async-nats = "0.38"
 axum = { version = "0.8", features = ["ws"] }
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+openseafeed-ais = { path = "crates/ais" }
+openseafeed-nmea = { path = "crates/nmea" }
+openseafeed-feed = { path = "crates/feed" }
+openseafeed-geo = { path = "crates/geo" }
 
 [profile.release]
 lto = "thin"

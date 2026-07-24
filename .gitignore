@@ -13,3 +13,6 @@ coverage.*
 .tofu/
 snapshots/
 *.db
+/target/
+control.db
+nohup.out

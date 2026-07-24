@@ -1,0 +1,21 @@
+# Build artifacts — never ship the host target dir into the build context.
+target/
+**/target/
+
+# VCS & CI
+.git/
+.github/
+
+# Local dev / deploy scaffolding not needed inside the image
+docker-compose.yml
+Makefile
+deploy/
+docs/
+web/
+*.md
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store

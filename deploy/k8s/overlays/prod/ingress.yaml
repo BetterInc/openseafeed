@@ -1,0 +1,73 @@
+# Public HTTP(S) routing via the nginx ingress controller.
+#
+#   stream.openseafeed.org  -> fanout       (WebSocket /v1/stream)
+#   api.openseafeed.org     -> snapshotter  (/v1/snapshot, /v1/vessels/*)
+#                              control       (everything else: /v1/auth, /v1/keys, ...)
+#
+# TLS is provisioned by cert-manager (see the cluster-issuer referenced below);
+# adjust the annotation/issuer name to your setup.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stream
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Long-lived WebSocket connections: raise read/send timeouts well above the
+    # 60s default so idle streams are not cut.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["stream.openseafeed.org"]
+      secretName: stream-tls
+  rules:
+    - host: stream.openseafeed.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fanout
+                port:
+                  number: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["api.openseafeed.org"]
+      secretName: api-tls
+  rules:
+    - host: api.openseafeed.org
+      http:
+        paths:
+          # Snapshot / vessel reads are served by the snapshotter.
+          - path: /v1/snapshot
+            pathType: Prefix
+            backend:
+              service:
+                name: snapshotter
+                port:
+                  number: 8082
+          - path: /v1/vessels
+            pathType: Prefix
+            backend:
+              service:
+                name: snapshotter
+                port:
+                  number: 8082
+          # Everything else (accounts, OAuth, API keys, stations) -> control.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: control
+                port:
+                  number: 8083

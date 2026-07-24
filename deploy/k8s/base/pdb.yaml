@@ -1,0 +1,25 @@
+# Keep a quorum of NATS during voluntary disruptions (node drains, upgrades),
+# and keep the live stream serving while fanout pods are rescheduled.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nats
+  labels:
+    app: nats
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: nats
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fanout
+  labels:
+    app: fanout
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: fanout

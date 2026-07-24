@@ -1,0 +1,118 @@
+# NATS 2.x with JetStream, clustered across 3 replicas with file storage.
+# StatefulSet gives each pod a stable identity + its own PVC for the JS store.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  labels:
+    app: nats
+data:
+  nats.conf: |
+    server_name: $POD_NAME
+    http: 8222
+
+    jetstream {
+      store_dir: /data/jetstream
+      max_memory_store: 256Mi
+      max_file_store: 4Gi
+    }
+
+    cluster {
+      name: openseafeed
+      port: 6222
+      routes: [
+        nats://nats-0.nats.openseafeed.svc:6222
+        nats://nats-1.nats.openseafeed.svc:6222
+        nats://nats-2.nats.openseafeed.svc:6222
+      ]
+    }
+---
+# Headless service for stable per-pod DNS (nats-0.nats, nats-1.nats, ...).
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  labels:
+    app: nats
+spec:
+  clusterIP: None
+  selector:
+    app: nats
+  ports:
+    - name: client
+      port: 4222
+    - name: cluster
+      port: 6222
+    - name: monitor
+      port: 8222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  labels:
+    app: nats
+spec:
+  serviceName: nats
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          args: ["-c", "/etc/nats/nats.conf"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: client
+              containerPort: 4222
+            - name: cluster
+              containerPort: 6222
+            - name: monitor
+              containerPort: 8222
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data/jetstream
+            - name: config
+              mountPath: /etc/nats
+      volumes:
+        - name: config
+          configMap:
+            name: nats-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

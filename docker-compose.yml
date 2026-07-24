@@ -1,0 +1,160 @@
+# OpenSeaFeed — local development stack.
+#
+#   make dev        # build + start everything
+#   make dev-logs   # follow logs
+#   make dev-down   # stop & remove
+#
+# The `norway-feed` worker is behind the `feeds` profile so it is opt-in:
+#   docker compose --profile feeds up -d norway-feed
+#
+# All app services share one image (built from ./Dockerfile) and select their
+# binary via `command`. Ports are published to localhost only.
+
+x-app-env: &app-env
+  RUST_LOG: ${RUST_LOG:-info}
+  OSF_NATS_URL: nats://nats:4222
+  OSF_KEYS_MODE: ${OSF_KEYS_MODE:-dev}
+  OSF_CONTROL_URL: http://control:8083
+  OSF_INTERNAL_TOKEN: ${OSF_INTERNAL_TOKEN:-dev-internal-token}
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "127.0.0.1:4222:4222"   # client
+      - "127.0.0.1:8222:8222"   # monitoring
+    healthcheck:
+      # NATS monitoring endpoint; /healthz reports JetStream readiness.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  ingest:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-ingest"]
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:10110:10110/udp"   # NMEA over UDP
+      - "127.0.0.1:10111:10111"       # NMEA over TCP
+      - "127.0.0.1:8080:8080"         # HTTP: WS /v1/ingest, /healthz, /metrics
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  pipeline:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-pipeline"]
+    environment:
+      <<: *app-env
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  fanout:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-fanout"]
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:8081:8081"         # HTTP: WS /v1/stream, /healthz
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  snapshotter:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-snapshotter"]
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:8082:8082"         # HTTP: /v1/snapshot, /v1/vessels/{mmsi}, /healthz
+    volumes:
+      - snapshots:/data/snapshots
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  control:
+    build: .
+    image: openseafeed:dev
+    command: ["openseafeed-control"]
+    environment:
+      <<: *app-env
+      OSF_DB_PATH: /data/control/control.db
+      # OAuth (leave unset for dev; set to enable real login flows):
+      OSF_SESSION_SECRET: ${OSF_SESSION_SECRET:-dev-session-secret}
+      OSF_GITHUB_CLIENT_ID: ${OSF_GITHUB_CLIENT_ID:-}
+      OSF_GITHUB_CLIENT_SECRET: ${OSF_GITHUB_CLIENT_SECRET:-}
+      OSF_GOOGLE_CLIENT_ID: ${OSF_GOOGLE_CLIENT_ID:-}
+      OSF_GOOGLE_CLIENT_SECRET: ${OSF_GOOGLE_CLIENT_SECRET:-}
+    ports:
+      - "127.0.0.1:8083:8083"         # HTTP: accounts, OAuth, API keys
+    volumes:
+      - control:/data/control
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Opt-in: pulls Norway's open government AIS feed and pushes it to ingest.
+  #   docker compose --profile feeds up -d norway-feed
+  norway-feed:
+    build: .
+    image: openseafeed:dev
+    profiles: ["feeds"]
+    command:
+      - openseafeed-worker
+      - connect
+      - --upstream
+      - norway
+      - --ingest
+      - tcp://ingest:10111
+      - --key
+      - ${OSF_FEED_KEY_NORWAY:-osf_stn_dev}
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      ingest:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  snapshots:
+  control:

@@ -1,0 +1,116 @@
+# Accounts, OAuth, API keys, tiers, station registry.
+# MVP uses a SQLite file on a PVC, so single replica + Recreate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control
+  labels:
+    app: control
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: control
+  template:
+    metadata:
+      labels:
+        app: control
+    spec:
+      containers:
+        - name: control
+          image: ghcr.io/openseafeed/openseafeed:latest
+          command: ["openseafeed-control"]
+          ports:
+            - name: http
+              containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: openseafeed-env
+          env:
+            - name: OSF_DB_PATH
+              value: /data/control/control.db
+            - name: OSF_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_INTERNAL_TOKEN
+            - name: OSF_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_SESSION_SECRET
+            - name: OSF_GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_GITHUB_CLIENT_ID
+            - name: OSF_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_GITHUB_CLIENT_SECRET
+            - name: OSF_GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_GOOGLE_CLIENT_ID
+            - name: OSF_GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_GOOGLE_CLIENT_SECRET
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: control-db
+              mountPath: /data/control
+      volumes:
+        - name: control-db
+          persistentVolumeClaim:
+            claimName: control-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-db
+  labels:
+    app: control
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control
+  labels:
+    app: control
+spec:
+  type: ClusterIP
+  selector:
+    app: control
+  ports:
+    - name: http
+      port: 8083
+      targetPort: http

@@ -1,0 +1,45 @@
+# Worker in "connect" mode: pulls Norway's open government AIS feed and pushes
+# it to the ingest gateway over TCP. One replica is enough for a single upstream.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-norway
+  labels:
+    app: worker-norway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-norway
+  template:
+    metadata:
+      labels:
+        app: worker-norway
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/openseafeed/openseafeed:latest
+          command:
+            - openseafeed-worker
+            - connect
+            - --upstream
+            - norway
+            - --ingest
+            - tcp://ingest:10111
+            - --key
+            - $(OSF_FEED_KEY)
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: OSF_FEED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_FEED_KEY_NORWAY
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

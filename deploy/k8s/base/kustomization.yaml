@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: openseafeed
+
+# Metadata-only label (not added to selectors, so it stays mutable later).
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: openseafeed
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - nats.yaml
+  - ingest.yaml
+  - pipeline.yaml
+  - fanout.yaml
+  - snapshotter.yaml
+  - control.yaml
+  - worker-norway.yaml
+  - pdb.yaml
+
+# The Secret is applied out-of-band (see secret.example.yaml); it is not part
+# of the kustomize build so real values never live in git.

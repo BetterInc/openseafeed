@@ -14,7 +14,7 @@ impl Bits {
             return Err(DecodeError::Armoring);
         }
         let chars = payload.as_bytes();
-        let mut b = vec![0u8; (chars.len() * 6 + 7) / 8];
+        let mut b = vec![0u8; (chars.len() * 6).div_ceil(8)];
         for (i, &c) in chars.iter().enumerate() {
             let mut v = c as i32 - 48;
             if v > 40 {

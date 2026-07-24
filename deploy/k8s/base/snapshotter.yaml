@@ -1,0 +1,91 @@
+# Full-fleet snapshot generator + HTTP serving. Single writer to a PVC, so
+# keep it at one replica (Recreate strategy avoids two pods holding the PVC).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snapshotter
+  labels:
+    app: snapshotter
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: snapshotter
+  template:
+    metadata:
+      labels:
+        app: snapshotter
+    spec:
+      containers:
+        - name: snapshotter
+          image: ghcr.io/openseafeed/openseafeed:latest
+          command: ["openseafeed-snapshotter"]
+          ports:
+            - name: http
+              containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: openseafeed-env
+          env:
+            - name: OSF_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openseafeed-secrets
+                  key: OSF_INTERNAL_TOKEN
+            - name: OSF_SNAPSHOT_DIR
+              value: /data/snapshots
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: snapshots
+              mountPath: /data/snapshots
+      volumes:
+        - name: snapshots
+          persistentVolumeClaim:
+            claimName: snapshots
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: snapshots
+  labels:
+    app: snapshotter
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snapshotter
+  labels:
+    app: snapshotter
+spec:
+  type: ClusterIP
+  selector:
+    app: snapshotter
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
