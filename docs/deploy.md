@@ -135,8 +135,9 @@ credentials.
   (S3-compatible) bucket via `TTL ... TO VOLUME 'cold'`, and the *same* table
   stays queryable across both tiers — cold reads are just slower.
 - **Lifecycle.** Hot on local disk for 14 days, then moved to Wasabi cold
-  (still queryable), then `TTL ... DELETE` at 1 year. These TTLs are part of
-  the archiver's schema, not the deploy.
+  (still queryable), then `TTL ... DELETE` at 2 years. These TTLs are part of
+  the archiver's schema, not the deploy. Two years rather than one because
+  Wasabi bills a 1 TB minimum: at ~0.4 TB/year, the second year is free.
 
 Object storage is on **Wasabi**, a separate S3-compatible provider (compute is
 on Scaleway; storage is not). Two Wasabi specifics matter here:
@@ -155,8 +156,23 @@ on Scaleway; storage is not). Two Wasabi specifics matter here:
 ```
 insert -> hot volume (local PVC, 14 days)
        -> cold volume (Wasabi bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 14d]
-       -> deleted                                         [TTL ... DELETE @ 1y]
+       -> deleted                                         [TTL ... DELETE @ 2y]
 ```
+
+TTLs are baked into the table when the archiver first creates it —
+**changing `OSF_HOT_DAYS`/`OSF_RETAIN_DAYS` later does not alter an existing
+table**. On a stack that already has data, apply once by hand:
+
+```sql
+ALTER TABLE osf.positions MODIFY TTL
+  toDateTime(ts) + INTERVAL 14 DAY TO VOLUME 'cold',
+  toDateTime(ts) + INTERVAL 730 DAY DELETE
+```
+
+(Drop the `TO VOLUME` clause if the Wasabi tier isn't enabled.) When volume
+grows 10x with the RF-station wave, prefer **downsampling over shorter
+retention**: keep raw ~90 days, roll older data up to one point per minute
+per vessel via a materialized view. Not built yet — planned when needed.
 
 If deep-history queries become frequent, add a **local read cache** to the S3
 disk (ClickHouse `cache` disk type layered over the Wasabi disk): recently

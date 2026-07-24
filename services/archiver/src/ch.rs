@@ -49,7 +49,9 @@ impl ClickHouse {
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
         let hot_days: u32 = env_num("OSF_HOT_DAYS", 14);
-        let retain_days: u32 = env_num("OSF_RETAIN_DAYS", 365);
+        // Two years: at current volume that fits inside Wasabi's 1 TB
+        // billing minimum, so deleting sooner saves nothing.
+        let retain_days: u32 = env_num("OSF_RETAIN_DAYS", 730);
         let tiered = std::env::var("OSF_CLICKHOUSE_TIERED")
             .map(|v| v == "1")
             .unwrap_or(false);

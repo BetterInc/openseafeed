@@ -5,7 +5,11 @@
 /// the server has a storage policy named `tiered` with a `cold` (S3)
 /// volume — parts are moved to object storage, where they remain queryable
 /// through the same table at higher latency. Everything is deleted after
-/// `OSF_RETAIN_DAYS` (default 365).
+/// `OSF_RETAIN_DAYS` (default 730).
+///
+/// NOTE: TTLs are baked into the table at creation; changing these env vars
+/// does NOT alter an existing table. Apply `ALTER TABLE … MODIFY TTL` by
+/// hand (see docs/deploy.md, History storage).
 pub fn migrations(db: &str, hot_days: u32, retain_days: u32, tiered: bool) -> Vec<String> {
     let ttl = if tiered {
         format!(
