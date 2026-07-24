@@ -64,7 +64,7 @@ pub struct PositionReport {
 }
 
 /// Message type 4 (and 11) — base station report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct BaseStationReport {
     #[serde(flatten)]
@@ -107,7 +107,7 @@ pub struct ShipStaticData {
 }
 
 /// Message type 9 — SAR aircraft position report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct SarAircraftPositionReport {
     #[serde(flatten)]
@@ -154,7 +154,7 @@ pub struct StandardClassBPositionReport {
 }
 
 /// Message type 19 — extended class B position report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct ExtendedClassBPositionReport {
     #[serde(flatten)]
@@ -177,7 +177,7 @@ pub struct ExtendedClassBPositionReport {
 }
 
 /// Message type 21 — aids-to-navigation report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct AidsToNavigationReport {
     #[serde(flatten)]
@@ -207,7 +207,7 @@ pub struct AidsToNavigationReport {
 
 /// Message type 24 — static data report. Part A carries the name, part B
 /// the rest.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct StaticDataReport {
     #[serde(flatten)]
@@ -229,7 +229,7 @@ pub struct StaticDataReport {
 }
 
 /// Message type 27 — long-range broadcast.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct LongRangeAisBroadcastMessage {
     #[serde(flatten)]
@@ -249,7 +249,7 @@ pub struct LongRangeAisBroadcastMessage {
 }
 
 /// Raw information about message types we do not decode yet.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct Unknown {
     #[serde(flatten)]
@@ -260,7 +260,7 @@ pub struct Unknown {
 /// A decoded AIS packet. Serde's external tagging makes this serialize as
 /// `{"PositionReport": {...}}` — exactly the shape of the aisstream.io
 /// `Message` object.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 pub enum Packet {
     PositionReport(PositionReport),
     BaseStationReport(BaseStationReport),

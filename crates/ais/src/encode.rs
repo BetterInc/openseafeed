@@ -172,6 +172,154 @@ pub fn encode_standard_class_b(p: &StandardClassBPositionReport) -> (String, u8)
     b.to_payload()
 }
 
+/// Encode a base station report (type 4/11) — 168 bits.
+pub fn encode_base_station_report(p: &BaseStationReport) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_uint(p.utc_year as u64, 14);
+    b.push_uint(p.utc_month as u64, 4);
+    b.push_uint(p.utc_day as u64, 5);
+    b.push_uint(p.utc_hour as u64, 5);
+    b.push_uint(p.utc_minute as u64, 6);
+    b.push_uint(p.utc_second as u64, 6);
+    b.push_bool(p.position_accuracy);
+    b.push_int(deg_to_minutes(p.longitude, 10_000.0), 28);
+    b.push_int(deg_to_minutes(p.latitude, 10_000.0), 27);
+    b.push_uint(p.fix_type as u64, 4);
+    b.push_uint(p.spare as u64, 10);
+    b.push_bool(p.raim);
+    b.push_uint(p.communication_state as u64, 19);
+    b.to_payload()
+}
+
+/// Encode a SAR aircraft position report (type 9) — 168 bits.
+pub fn encode_sar_aircraft(p: &SarAircraftPositionReport) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_uint(p.altitude as u64, 12);
+    b.push_uint(p.sog as u64, 10);
+    b.push_bool(p.position_accuracy);
+    b.push_int(deg_to_minutes(p.longitude, 10_000.0), 28);
+    b.push_int(deg_to_minutes(p.latitude, 10_000.0), 27);
+    b.push_uint((p.cog * 10.0).round() as u64, 12);
+    b.push_uint(p.timestamp as u64, 6);
+    b.push_bool(p.alt_from_baro);
+    b.push_uint(0, 7); // regional reserved
+    b.push_bool(p.dte);
+    b.push_uint(0, 3); // spare
+    b.push_bool(p.assigned_mode);
+    b.push_bool(p.raim);
+    b.push_uint(p.communication_state as u64, 20);
+    b.to_payload()
+}
+
+/// Encode an extended class B position report (type 19) — 312 bits.
+pub fn encode_extended_class_b(p: &ExtendedClassBPositionReport) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_uint(0, 8); // reserved
+    b.push_uint((p.sog * 10.0).round() as u64, 10);
+    b.push_bool(p.position_accuracy);
+    b.push_int(deg_to_minutes(p.longitude, 10_000.0), 28);
+    b.push_int(deg_to_minutes(p.latitude, 10_000.0), 27);
+    b.push_uint((p.cog * 10.0).round() as u64, 12);
+    b.push_uint(p.true_heading as u64, 9);
+    b.push_uint(p.timestamp as u64, 6);
+    b.push_uint(0, 4); // regional reserved
+    b.push_str(&p.name, 120);
+    b.push_uint(p.ship_type as u64, 8);
+    push_dimension(&mut b, &p.dimension);
+    b.push_uint(p.fix_type as u64, 4);
+    b.push_bool(p.raim);
+    b.push_bool(p.dte);
+    b.push_bool(p.assigned_mode);
+    b.push_uint(0, 4); // spare
+    b.to_payload()
+}
+
+/// Encode an aids-to-navigation report (type 21) — 272 bits (name
+/// extension omitted; names beyond 20 chars are truncated).
+pub fn encode_aids_to_navigation(p: &AidsToNavigationReport) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_uint(p.aid_type as u64, 5);
+    b.push_str(&p.name, 120);
+    b.push_bool(p.position_accuracy);
+    b.push_int(deg_to_minutes(p.longitude, 10_000.0), 28);
+    b.push_int(deg_to_minutes(p.latitude, 10_000.0), 27);
+    push_dimension(&mut b, &p.dimension);
+    b.push_uint(p.fix_type as u64, 4);
+    b.push_uint(p.timestamp as u64, 6);
+    b.push_bool(p.off_position);
+    b.push_uint(p.aton_status as u64, 8);
+    b.push_bool(p.raim);
+    b.push_bool(p.virtual_aton);
+    b.push_bool(p.assigned_mode);
+    b.push_bool(false); // spare
+    b.to_payload()
+}
+
+/// Encode a static data report (type 24, part A or B per `part_number`) —
+/// 160/168 bits.
+pub fn encode_static_data_report(p: &StaticDataReport) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_uint(p.part_number as u64, 2);
+    if p.part_number == 0 {
+        b.push_str(&p.name, 120);
+    } else {
+        b.push_uint(p.ship_type as u64, 8);
+        b.push_str(&p.vendor_id_name, 18);
+        b.push_uint(p.vender_id_model as u64, 4);
+        b.push_uint(p.vender_id_serial as u64, 20);
+        b.push_str(&p.call_sign, 42);
+        push_dimension(&mut b, &p.dimension);
+        b.push_uint(p.spare as u64, 6);
+    }
+    b.to_payload()
+}
+
+/// Encode a long-range broadcast (type 27) — 96 bits.
+pub fn encode_long_range(p: &LongRangeAisBroadcastMessage) -> (String, u8) {
+    let mut b = BitsMut::new();
+    push_header(&mut b, &p.header);
+    b.push_bool(p.position_accuracy);
+    b.push_bool(p.raim);
+    b.push_uint(p.navigational_status as u64, 4);
+    b.push_int(deg_to_minutes(p.longitude, 10.0), 18);
+    b.push_int(deg_to_minutes(p.latitude, 10.0), 17);
+    b.push_uint(p.sog.round() as u64, 6);
+    b.push_uint(p.cog.round() as u64, 9);
+    b.push_bool(p.position_latency);
+    b.push_bool(p.spare);
+    b.to_payload()
+}
+
+fn push_dimension(b: &mut BitsMut, d: &Dimension) {
+    b.push_uint(d.a as u64, 9);
+    b.push_uint(d.b as u64, 9);
+    b.push_uint(d.c as u64, 6);
+    b.push_uint(d.d as u64, 6);
+}
+
+impl Packet {
+    /// Encode any packet back to an armored payload. `None` for `Unknown`.
+    pub fn encode(&self) -> Option<(String, u8)> {
+        Some(match self {
+            Packet::PositionReport(p) => encode_position_report(p),
+            Packet::BaseStationReport(p) => encode_base_station_report(p),
+            Packet::ShipStaticData(p) => encode_ship_static_data(p),
+            Packet::StandardSearchAndRescueAircraftReport(p) => encode_sar_aircraft(p),
+            Packet::StandardClassBPositionReport(p) => encode_standard_class_b(p),
+            Packet::ExtendedClassBPositionReport(p) => encode_extended_class_b(p),
+            Packet::AidsToNavigationReport(p) => encode_aids_to_navigation(p),
+            Packet::StaticDataReport(p) => encode_static_data_report(p),
+            Packet::LongRangeAisBroadcastMessage(p) => encode_long_range(p),
+            Packet::Unknown(_) => return None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +448,34 @@ mod tests {
         assert_eq!(q.true_heading, 511);
         assert!(q.communication_state_is_itdma);
         assert_eq!(q.communication_state, 393_222);
+    }
+
+    #[test]
+    fn all_golden_vectors_survive_decode_encode_decode() {
+        // Every payload from the pyais-validated golden set: decoding the
+        // re-encoded payload must yield an identical packet.
+        let vectors: &[(&str, u8)] = &[
+            ("177KQJ5000G?tO`K>RA1wUbN0TKH", 0),                       // 1
+            ("35Ml=50Oh@o?vlHDS6`AS0rR0000", 0),                       // 3
+            ("402;rFiv@k;tmK`GJDTIS?vN20S:", 0),                       // 4
+            (
+                "55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E531@0000000000000",
+                2,
+            ),                                                          // 5
+            ("91b55wi;hbOS@OdQAC062Ch2089h", 0),                       // 9
+            ("B52K>;h00Fc>jpUlNV@ikwpUoP06", 0),                       // 18
+            ("C5N3SRgPEnJGEBT>NhWAwwo862PaLELTBJ:V00000000S0D:R220", 0), // 19
+            ("E>k`sO70VQ97aRh1T0W72V@611@=FVj<;V5d@00003v010", 4),     // 21
+            ("H52KNe@Pm>0Htt0000000000000", 2),                        // 24A
+            ("H3pro:4q3?=1B0000000000P7220", 0),                       // 24B
+            ("KC5E2b@U19PFdLbMuc5=ROv62<7m", 0),                       // 27
+        ];
+        for (payload, fill) in vectors {
+            let m1 = decode(payload, *fill).unwrap();
+            let (p2, f2) = m1.packet.encode().unwrap();
+            let m2 = decode(&p2, f2).unwrap();
+            assert_eq!(m1.packet, m2.packet, "round trip failed for {payload}");
+        }
     }
 
     #[test]
