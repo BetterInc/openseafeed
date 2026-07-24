@@ -7,11 +7,11 @@ target/
 .github/
 
 # Local dev / deploy scaffolding not needed inside the image
+# (web/ stays IN: fanout embeds web/live.html via include_str! at compile time)
 docker-compose.yml
 Makefile
 deploy/
 docs/
-web/
 *.md
 
 # Editor / OS cruft
