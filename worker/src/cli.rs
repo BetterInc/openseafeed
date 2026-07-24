@@ -69,6 +69,8 @@ pub enum Upstream {
     Ws { url: String },
     /// Digitraffic marine AIS (MQTT over WebSocket).
     Finland,
+    /// aisstream.io v0 WebSocket stream.
+    Aisstream,
 }
 
 /// Env var naming the DMA-granted TCP endpoint for the `denmark` preset.
@@ -101,6 +103,10 @@ pub fn parse_upstream(s: &str) -> Result<Upstream> {
             port: 5631,
         }),
         "finland" => Ok(Upstream::Finland),
+        "aisstream" => match std::env::var(crate::aisstream::AISSTREAM_KEY_ENV) {
+            Ok(_) => Ok(Upstream::Aisstream),
+            Err(_) => bail!("{}", crate::aisstream::AISSTREAM_HELP),
+        },
         "denmark" => match std::env::var(DENMARK_ADDR_ENV) {
             Ok(addr) => parse_upstream(&addr),
             Err(_) => bail!("{DENMARK_HELP}"),
@@ -185,6 +191,18 @@ mod tests {
     #[test]
     fn finland_preset_resolves() {
         assert_eq!(parse_upstream("finland").unwrap(), Upstream::Finland);
+    }
+
+    #[test]
+    fn aisstream_preset_follows_env() {
+        let env = crate::aisstream::AISSTREAM_KEY_ENV;
+        std::env::remove_var(env);
+        assert!(parse_upstream("aisstream").is_err());
+
+        // A non-secret placeholder — never the real key.
+        std::env::set_var(env, "placeholder-not-a-real-key");
+        assert_eq!(parse_upstream("aisstream").unwrap(), Upstream::Aisstream);
+        std::env::remove_var(env);
     }
 
     #[test]

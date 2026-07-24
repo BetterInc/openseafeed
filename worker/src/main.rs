@@ -1,3 +1,4 @@
+mod aisstream;
 mod backoff;
 mod cli;
 mod finland;
@@ -18,6 +19,11 @@ use cli::{Cli, Command, ConnectArgs, ForwardArgs, SinkArgs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // tokio-tungstenite links rustls without picking a crypto provider; install
+    // one process-wide before any TLS handshake. Ignore the error that means it
+    // was already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
@@ -39,6 +45,10 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
     // you have access" case, not a generic error: exit 2 with instructions.
     if args.upstream == "denmark" && std::env::var_os(cli::DENMARK_ADDR_ENV).is_none() {
         eprintln!("{}", cli::DENMARK_HELP);
+        std::process::exit(2);
+    }
+    if args.upstream == "aisstream" && std::env::var_os(aisstream::AISSTREAM_KEY_ENV).is_none() {
+        eprintln!("{}", aisstream::AISSTREAM_HELP);
         std::process::exit(2);
     }
     let upstream = cli::parse_upstream(&args.upstream)?;

@@ -18,3 +18,6 @@ openseafeed-nmea.workspace = true
 openseafeed-ais.workspace = true
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 rumqttc = { version = "0.24", features = ["websocket", "use-rustls"] }
+# tokio-tungstenite pulls rustls but selects no crypto provider; we install
+# the ring provider at startup so the WS/TLS paths don't panic at runtime.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }

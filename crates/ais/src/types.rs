@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 /// Header fields common to every message.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
 pub struct Header {
     #[serde(rename = "MessageID")]
     pub message_id: u8,
@@ -14,7 +14,7 @@ pub struct Header {
 }
 
 /// Vessel dimensions relative to the reported position, meters.
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Dimension {
     #[serde(rename = "A")]
     pub a: u16, // to bow
@@ -27,7 +27,7 @@ pub struct Dimension {
 }
 
 /// Estimated time of arrival from static/voyage data.
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub struct Eta {
     pub month: u8,
@@ -37,7 +37,7 @@ pub struct Eta {
 }
 
 /// Message types 1, 2, 3 — class A position report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct PositionReport {
     #[serde(flatten)]
@@ -85,7 +85,7 @@ pub struct BaseStationReport {
 }
 
 /// Message type 5 — class A static and voyage data.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct ShipStaticData {
     #[serde(flatten)]
@@ -129,7 +129,7 @@ pub struct SarAircraftPositionReport {
 }
 
 /// Message type 18 — standard class B position report.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct StandardClassBPositionReport {
     #[serde(flatten)]
