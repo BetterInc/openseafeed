@@ -3,6 +3,10 @@
 # plus the usual cargo workflows.
 
 COMPOSE ?= docker compose
+# ALL profiles, so `make dev-down` never orphans feed connectors (a plain
+# `docker compose down` skips services in inactive profiles, leaving them
+# running and holding the network -> "resource is busy").
+COMPOSE_ALL ?= $(COMPOSE) --profile feeds --profile aisstream --profile denmark --profile dma-history
 
 .DEFAULT_GOAL := help
 
@@ -20,8 +24,8 @@ dev: ## Build & start the full local stack (NATS + all services)
 dev-logs: ## Follow logs from the local stack
 	$(COMPOSE) logs -f
 
-dev-down: ## Stop and remove the local stack (keeps named volumes)
-	$(COMPOSE) down
+dev-down: ## Stop and remove the local stack incl. all feed connectors (keeps named volumes)
+	$(COMPOSE_ALL) down
 
 test: ## Run the full workspace test suite
 	cargo test --workspace
