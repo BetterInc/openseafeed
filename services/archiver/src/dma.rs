@@ -386,30 +386,25 @@ mod tests {
 
     #[test]
     fn plans_newest_first_within_window_skipping_done() {
-        // The real listing shape from aisdata.ais.dk, 2026-07-29.
-        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
-        let files: Vec<(NaiveDate, String)> = [
-            "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23",
-            "2026-07-24", "2026-07-25", "2026-07-26",
-        ]
-        .iter()
-        .map(|s| (d(s), format!("aisdk-{s}.zip")))
-        .collect();
-        let done: std::collections::HashSet<String> =
-            ["aisdk-2026-07-24.zip".to_string()].into();
-        // 7-day window as of 2026-07-29 -> cutoff 2026-07-22.
-        let plan = plan_imports(files, d("2026-07-22"), &done);
-        assert_eq!(
-            plan.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>(),
-            vec![
-                "aisdk-2026-07-26.zip", // newest first
-                "aisdk-2026-07-25.zip",
-                // 07-24 skipped: already imported
-                "aisdk-2026-07-23.zip",
-                "aisdk-2026-07-22.zip", // cutoff inclusive
-                // 07-21 and 07-20 outside the window
-            ]
-        );
+        let today = Utc::now().date_naive();
+        let day = |n: i64| today - chrono::Duration::days(n);
+        let name = |d: NaiveDate| format!("aisdk-{d}.zip");
+
+        // Listing: daily files from 9 to 3 days old (DMA's usual lag),
+        // handed over unsorted like a raw listing could be.
+        let mut files: Vec<(NaiveDate, String)> =
+            (3..=9).map(|n| (day(n), name(day(n)))).collect();
+        files.swap(0, 4);
+        // One mid-window file already imported.
+        let done: std::collections::HashSet<String> = [name(day(5))].into();
+        // Same window rule as poll_once: today - backfill_days, inclusive.
+        let cutoff = day(7);
+
+        let plan = plan_imports(files, cutoff, &done);
+        let got: Vec<String> = plan.into_iter().map(|(_, n)| n).collect();
+        // Newest first; day 5 skipped (done); days 8-9 outside the window.
+        let want: Vec<String> = [3i64, 4, 6, 7].iter().map(|&n| name(day(n))).collect();
+        assert_eq!(got, want);
     }
 
     #[test]
