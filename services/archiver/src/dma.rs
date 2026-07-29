@@ -102,19 +102,10 @@ async fn poll_once(ch: &ClickHouse, http: &reqwest::Client, cfg: &Config) -> any
             break;
         }
     }
-    files.sort();
-    files.dedup();
-    // Newest first: the most recent day is the most queried, so it should
-    // be available soonest; older backlog files follow.
-    files.reverse();
-
     let cutoff = Utc::now().date_naive() - chrono::Duration::days(cfg.backfill_days);
     let done = imported_files(ch).await?;
 
-    for (date, name) in files {
-        if date < cutoff || done.contains(&name) {
-            continue;
-        }
+    for (date, name) in plan_imports(files, cutoff, &done) {
         tracing::info!(file = name, "new DMA dump found, importing");
         // Idempotency: a crash mid-import leaves rows without a dma_imports
         // record; clear that day's import rows before (re)importing.
@@ -158,6 +149,23 @@ pub fn parse_listing(html: &str) -> Vec<(NaiveDate, String)> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Decide what to import and in which order: inside the backfill window,
+/// not yet imported, NEWEST FIRST — the most recent day is the most queried,
+/// so it must be available soonest; older backlog files follow.
+fn plan_imports(
+    mut files: Vec<(NaiveDate, String)>,
+    cutoff: NaiveDate,
+    done: &std::collections::HashSet<String>,
+) -> Vec<(NaiveDate, String)> {
+    files.sort();
+    files.dedup();
+    files.reverse();
+    files
+        .into_iter()
+        .filter(|(date, name)| *date >= cutoff && !done.contains(name))
+        .collect()
 }
 
 fn next_continuation_token(xml: &str) -> Option<String> {
@@ -374,6 +382,34 @@ mod tests {
             Some("2026-07-23 14:05:09.000")
         );
         assert!(parse_dma_ts("garbage").is_none());
+    }
+
+    #[test]
+    fn plans_newest_first_within_window_skipping_done() {
+        // The real listing shape from aisdata.ais.dk, 2026-07-29.
+        let d = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let files: Vec<(NaiveDate, String)> = [
+            "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23",
+            "2026-07-24", "2026-07-25", "2026-07-26",
+        ]
+        .iter()
+        .map(|s| (d(s), format!("aisdk-{s}.zip")))
+        .collect();
+        let done: std::collections::HashSet<String> =
+            ["aisdk-2026-07-24.zip".to_string()].into();
+        // 7-day window as of 2026-07-29 -> cutoff 2026-07-22.
+        let plan = plan_imports(files, d("2026-07-22"), &done);
+        assert_eq!(
+            plan.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>(),
+            vec![
+                "aisdk-2026-07-26.zip", // newest first
+                "aisdk-2026-07-25.zip",
+                // 07-24 skipped: already imported
+                "aisdk-2026-07-23.zip",
+                "aisdk-2026-07-22.zip", // cutoff inclusive
+                // 07-21 and 07-20 outside the window
+            ]
+        );
     }
 
     #[test]
