@@ -101,16 +101,39 @@ pub async fn read(queue: &LineQueue, stats: &Stats, backoff: &mut Backoff) -> Re
 
     let mut seq: u8 = 0;
     let mut counts = Counts::default();
-    while let Some(msg) = stream.next().await {
-        match msg? {
-            Message::Text(text) => handle_text(text.as_str(), queue, stats, &mut seq, &mut counts),
-            Message::Binary(bytes) => {
-                if let Ok(text) = std::str::from_utf8(&bytes) {
-                    handle_text(text, queue, stats, &mut seq, &mut counts);
+    // Staleness watchdog: the world feed streams continuously, so a silent
+    // socket is a dead socket. Without this, a half-open TCP connection
+    // blocks the read forever and the reconnect logic never fires (seen in
+    // production: counters frozen for hours with reconnects=0).
+    let mut last_frame = tokio::time::Instant::now();
+    let mut ping_tick = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                let Some(msg) = msg else { break };
+                last_frame = tokio::time::Instant::now();
+                match msg? {
+                    Message::Text(text) => {
+                        handle_text(text.as_str(), queue, stats, &mut seq, &mut counts)
+                    }
+                    Message::Binary(bytes) => {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            handle_text(text, queue, stats, &mut seq, &mut counts);
+                        }
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
-            Message::Close(_) => break,
-            _ => {}
+            _ = ping_tick.tick() => {
+                if last_frame.elapsed() > std::time::Duration::from_secs(90) {
+                    anyhow::bail!("no frames for 90s, treating connection as dead");
+                }
+                // Client-initiated ping: a broken path fails the send (or
+                // stays silent and trips the 90s bail above).
+                sink.send(Message::Ping(Vec::new().into())).await?;
+            }
         }
     }
 
