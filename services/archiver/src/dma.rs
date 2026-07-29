@@ -104,6 +104,9 @@ async fn poll_once(ch: &ClickHouse, http: &reqwest::Client, cfg: &Config) -> any
     }
     files.sort();
     files.dedup();
+    // Newest first: the most recent day is the most queried, so it should
+    // be available soonest; older backlog files follow.
+    files.reverse();
 
     let cutoff = Utc::now().date_naive() - chrono::Duration::days(cfg.backfill_days);
     let done = imported_files(ch).await?;
