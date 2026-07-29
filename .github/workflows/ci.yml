@@ -44,7 +44,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/openseafeed/openseafeed
+      IMAGE: ghcr.io/bram-projects/openseafeed
     steps:
       - uses: actions/checkout@v4
 
