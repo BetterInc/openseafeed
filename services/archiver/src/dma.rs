@@ -33,6 +33,9 @@ pub struct Config {
     /// How many days back to consider on an empty state (avoid importing
     /// years of history by accident).
     pub backfill_days: i64,
+    /// Cap on files imported per poll cycle; 0 = unlimited. Local dev sets 1
+    /// (just the newest day); production runs unlimited to fill the window.
+    pub max_files: usize,
     pub rows_per_sec: u64,
     pub tmp_dir: std::path::PathBuf,
 }
@@ -48,6 +51,7 @@ impl Config {
             // DMA publishes each day's file ~3 days later, so the window
             // must comfortably exceed that lag.
             backfill_days: env_num("OSF_DMA_BACKFILL_DAYS", 7i64),
+            max_files: env_num("OSF_DMA_MAX_FILES", 0usize),
             rows_per_sec: env_num("OSF_DMA_ROWS_PER_SEC", 20_000u64),
             tmp_dir: std::env::var("OSF_DMA_TMP")
                 .map(Into::into)
@@ -105,7 +109,7 @@ async fn poll_once(ch: &ClickHouse, http: &reqwest::Client, cfg: &Config) -> any
     let cutoff = Utc::now().date_naive() - chrono::Duration::days(cfg.backfill_days);
     let done = imported_files(ch).await?;
 
-    for (date, name) in plan_imports(files, cutoff, &done) {
+    for (date, name) in plan_imports(files, cutoff, &done, cfg.max_files) {
         tracing::info!(file = name, "new DMA dump found, importing");
         // Idempotency: a crash mid-import leaves rows without a dma_imports
         // record; clear that day's import rows before (re)importing.
@@ -158,13 +162,16 @@ fn plan_imports(
     mut files: Vec<(NaiveDate, String)>,
     cutoff: NaiveDate,
     done: &std::collections::HashSet<String>,
+    max_files: usize,
 ) -> Vec<(NaiveDate, String)> {
     files.sort();
     files.dedup();
     files.reverse();
+    let cap = if max_files == 0 { usize::MAX } else { max_files };
     files
         .into_iter()
         .filter(|(date, name)| *date >= cutoff && !done.contains(name))
+        .take(cap)
         .collect()
 }
 
@@ -400,11 +407,16 @@ mod tests {
         // Same window rule as poll_once: today - backfill_days, inclusive.
         let cutoff = day(7);
 
-        let plan = plan_imports(files, cutoff, &done);
+        let plan = plan_imports(files.clone(), cutoff, &done, 0);
         let got: Vec<String> = plan.into_iter().map(|(_, n)| n).collect();
         // Newest first; day 5 skipped (done); days 8-9 outside the window.
         let want: Vec<String> = [3i64, 4, 6, 7].iter().map(|&n| name(day(n))).collect();
         assert_eq!(got, want);
+
+        // max_files=1 (local dev): just the newest not-yet-imported file.
+        let capped = plan_imports(files, cutoff, &done, 1);
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped[0].1, name(day(3)));
     }
 
     #[test]

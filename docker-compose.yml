@@ -315,6 +315,9 @@ services:
       OSF_CLICKHOUSE_USER: osf
       OSF_CLICKHOUSE_PASSWORD: osf-dev
       OSF_DMA_BACKFILL_DAYS: ${OSF_DMA_BACKFILL_DAYS:-7}
+      # Local default: only the newest file per poll. Production (k8s) runs
+      # 0 = unlimited to fill the whole backfill window.
+      OSF_DMA_MAX_FILES: ${OSF_DMA_MAX_FILES:-1}
       OSF_DMA_POLL_SECS: ${OSF_DMA_POLL_SECS:-3600}
       OSF_DMA_ROWS_PER_SEC: ${OSF_DMA_ROWS_PER_SEC:-20000}
     volumes:
