@@ -48,10 +48,12 @@ impl ClickHouse {
     }
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
-        let hot_days: u32 = env_num("OSF_HOT_DAYS", 14);
-        // Two years: at current volume that fits inside Wasabi's 1 TB
-        // billing minimum, so deleting sooner saves nothing.
-        let retain_days: u32 = env_num("OSF_RETAIN_DAYS", 730);
+        // 7 hot days on local disk covers the queries people actually make
+        // often; everything else reads from the Wasabi cold tier.
+        let hot_days: u32 = env_num("OSF_HOT_DAYS", 7);
+        // Five years cold. At current volume (~0.4 TB/yr) that's ~2 TB on
+        // Wasabi ≈ $14/mo — history is the product, keep it deep.
+        let retain_days: u32 = env_num("OSF_RETAIN_DAYS", 1825);
         let tiered = std::env::var("OSF_CLICKHOUSE_TIERED")
             .map(|v| v == "1")
             .unwrap_or(false);

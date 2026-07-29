@@ -1,11 +1,11 @@
 /// Schema migrations, applied idempotently at startup.
 ///
 /// Retention model: rows live on the hot (local) volume for
-/// `OSF_HOT_DAYS` (default 14), then — when `OSF_CLICKHOUSE_TIERED=1` and
+/// `OSF_HOT_DAYS` (default 7), then — when `OSF_CLICKHOUSE_TIERED=1` and
 /// the server has a storage policy named `tiered` with a `cold` (S3)
 /// volume — parts are moved to object storage, where they remain queryable
 /// through the same table at higher latency. Everything is deleted after
-/// `OSF_RETAIN_DAYS` (default 730).
+/// `OSF_RETAIN_DAYS` (default 1825).
 ///
 /// NOTE: TTLs are baked into the table at creation; changing these env vars
 /// does NOT alter an existing table. Apply `ALTER TABLE … MODIFY TTL` by

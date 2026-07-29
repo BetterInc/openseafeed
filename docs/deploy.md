@@ -134,10 +134,12 @@ credentials.
 - **Native tiered storage.** Parts age from the local (hot) disk to a Wasabi
   (S3-compatible) bucket via `TTL ... TO VOLUME 'cold'`, and the *same* table
   stays queryable across both tiers — cold reads are just slower.
-- **Lifecycle.** Hot on local disk for 14 days, then moved to Wasabi cold
-  (still queryable), then `TTL ... DELETE` at 2 years. These TTLs are part of
-  the archiver's schema, not the deploy. Two years rather than one because
-  Wasabi bills a 1 TB minimum: at ~0.4 TB/year, the second year is free.
+- **Lifecycle.** Hot on local disk for 7 days, then moved to Wasabi cold
+  (still queryable through the same table and the same history API, just
+  slower), then `TTL ... DELETE` at 5 years. These TTLs are part of the
+  archiver's schema, not the deploy. Five years costs ~$14/mo on Wasabi at
+  current volume (~0.4 TB/yr, $7/TB/mo, 1 TB billing minimum) — history is
+  part of the product, so keep it deep.
 
 Object storage is on **Wasabi**, a separate S3-compatible provider (compute is
 on Scaleway; storage is not). Two Wasabi specifics matter here:
@@ -147,16 +149,16 @@ on Scaleway; storage is not). Two Wasabi specifics matter here:
   history queries expensive. Wasabi's flat **~$7/TB/month** (1 TB minimum)
   covers a year of AIS history with no egress surprises.
 - **90-day minimum storage billing is a non-issue.** Wasabi bills any object
-  for at least 90 days even if deleted sooner; our cold parts live ~350 days
-  (moved at 14 days, deleted at the 1-year TTL) — well past the minimum — so we
+  for at least 90 days even if deleted sooner; our cold parts live years
+  (moved at 7 days, deleted at the 5-year TTL) — far past the minimum — so we
   never pay for storage we didn't use.
 
 ### Tiers
 
 ```
-insert -> hot volume (local PVC, 14 days)
-       -> cold volume (Wasabi bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 14d]
-       -> deleted                                         [TTL ... DELETE @ 2y]
+insert -> hot volume (local PVC, 7 days)
+       -> cold volume (Wasabi bucket, queryable, slower)  [TTL ... TO VOLUME 'cold' @ 7d]
+       -> deleted                                         [TTL ... DELETE @ 5y]
 ```
 
 TTLs are baked into the table when the archiver first creates it —
@@ -165,8 +167,8 @@ table**. On a stack that already has data, apply once by hand:
 
 ```sql
 ALTER TABLE osf.positions MODIFY TTL
-  toDateTime(ts) + INTERVAL 14 DAY TO VOLUME 'cold',
-  toDateTime(ts) + INTERVAL 730 DAY DELETE
+  toDateTime(ts) + INTERVAL 7 DAY TO VOLUME 'cold',
+  toDateTime(ts) + INTERVAL 1825 DAY DELETE
 ```
 
 (Drop the `TO VOLUME` clause if the Wasabi tier isn't enabled.) When volume
