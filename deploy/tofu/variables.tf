@@ -61,9 +61,9 @@ variable "k8s_version" {
 }
 
 variable "zone_domain" {
-  description = "Apex domain served by the platform (e.g. openseafeed.org)"
+  description = "Apex domain served by the platform (e.g. openseafeed.com)"
   type        = string
-  default     = "openseafeed.org"
+  default     = "openseafeed.com"
 }
 
 variable "enable_cloudflare" {

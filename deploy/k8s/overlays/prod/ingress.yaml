@@ -1,7 +1,7 @@
 # Public HTTP(S) routing via the nginx ingress controller.
 #
-#   stream.openseafeed.org  -> fanout       (WebSocket /v1/stream)
-#   api.openseafeed.org     -> snapshotter  (/v1/snapshot, /v1/vessels/*)
+#   stream.openseafeed.com  -> fanout       (WebSocket /v1/stream)
+#   api.openseafeed.com     -> snapshotter  (/v1/snapshot, /v1/vessels/*)
 #                              control       (everything else: /v1/auth, /v1/keys, ...)
 #
 # TLS is provisioned by cert-manager (see the cluster-issuer referenced below);
@@ -19,10 +19,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["stream.openseafeed.org"]
+    - hosts: ["stream.openseafeed.com"]
       secretName: stream-tls
   rules:
-    - host: stream.openseafeed.org
+    - host: stream.openseafeed.com
       http:
         paths:
           - path: /
@@ -42,10 +42,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["api.openseafeed.org"]
+    - hosts: ["api.openseafeed.com"]
       secretName: api-tls
   rules:
-    - host: api.openseafeed.org
+    - host: api.openseafeed.com
       http:
         paths:
           # Snapshot / vessel reads are served by the snapshotter.

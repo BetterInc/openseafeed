@@ -16,14 +16,14 @@ and pushes it into OpenSeaFeed's public ingest endpoint. Key properties:
 It is the same binary everywhere: `openseafeed-worker connect`.
 
 ```
-upstream feed  ──►  openseafeed-worker connect  ──►  ingest.openseafeed.org
+upstream feed  ──►  openseafeed-worker connect  ──►  ingest.openseafeed.com
 (Kystverket,        (--upstream <feed>              (WSS /v1/ingest, or TCP,
  Digitraffic, …)     --key osf_feed_…)               feed-key authenticated)
 ```
 
 ## Getting a feed key
 
-Sign in to the control-plane dashboard (`https://api.openseafeed.org`, GitHub
+Sign in to the control-plane dashboard (`https://api.openseafeed.com`, GitHub
 or Google login) and create a feed key under your account. It looks like
 `osf_feed_…`. One key can be reused across your connectors, or use one per feed
 so you can revoke them independently.
@@ -38,7 +38,7 @@ The connector's `--ingest` target accepts three URL schemes:
 | `tcp://host:10111` | authenticated TCP (sends `AUTH <key>` first) | feed key |
 | `udp://host:10110` | LAN / dev only | none |
 
-Public endpoint: `wss://ingest.openseafeed.org/v1/ingest`.
+Public endpoint: `wss://ingest.openseafeed.com/v1/ingest`.
 
 ## Run options
 
