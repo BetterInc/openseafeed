@@ -1,0 +1,115 @@
+#cloud-config
+# OpenSeaFeed single-box bootstrap: Docker CE + compose plugin, with the extra
+# block volume carrying /var/lib/docker (images, build cache and every named
+# volume — ClickHouse hot tier, NATS JetStream, snapshots, control sqlite).
+#
+# It stops there on purpose: the repo is NOT cloned and nothing is started, so
+# a fresh box never comes up with a half-configured stack and no secrets. The
+# first deploy is a human following docs/production.md.
+hostname: ${server_name}
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - rsync
+  - jq
+  - unattended-upgrades
+
+ssh_authorized_keys:
+  - ${ssh_public_key}
+
+write_files:
+  # Container logs on a long-lived box fill the disk unless capped.
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "50m", "max-file": "3" }
+      }
+
+  - path: /etc/motd
+    permissions: "0644"
+    content: |
+
+        OpenSeaFeed production host — ${domain}
+
+        The stack lives in /opt/openseafeed and runs under docker compose:
+
+          cd /opt/openseafeed
+          docker compose ps                 # .env sets COMPOSE_FILE, so no -f needed
+          docker compose logs -f fanout
+          docker compose up -d --build      # deploy after a git pull
+
+        Runbook (first deploy, secrets, backups, rollback, Kapsule migration):
+        docs/production.md in that directory.
+
+  - path: /usr/local/sbin/osf-bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Mount the data volume at /var/lib/docker, then install Docker onto it.
+      # Idempotent: safe to re-run by hand after a failed cloud-init.
+      set -euo pipefail
+
+      # --- data volume ------------------------------------------------------
+      # The extra volume is the only disk that is neither the root disk nor
+      # already mounted. Scaleway block devices are named /dev/sdX or
+      # /dev/nvmeXnY depending on the instance family, so discover it.
+      root_src="$(findmnt -no SOURCE /)"
+      root_disk="/dev/$(lsblk -no pkname "$root_src" | head -1)"
+      data_dev=""
+      for dev in $(lsblk -dpno NAME,TYPE | awk '$2 == "disk" { print $1 }'); do
+        [ "$dev" = "$root_disk" ] && continue
+        [ -n "$(lsblk -no MOUNTPOINTS "$dev" | tr -d ' \n')" ] && continue
+        data_dev="$dev"
+        break
+      done
+
+      if [ -z "$data_dev" ]; then
+        echo "osf-bootstrap: no spare block device found; Docker will use the root volume" >&2
+      else
+        if ! blkid "$data_dev" >/dev/null 2>&1; then
+          echo "osf-bootstrap: formatting $data_dev"
+          mkfs.ext4 -q -L osf-data "$data_dev"
+        fi
+        uuid="$(blkid -s UUID -o value "$data_dev")"
+        mkdir -p /var/lib/docker
+        # nofail: a missing data volume must not strand the box in emergency mode.
+        if ! grep -q "$uuid" /etc/fstab; then
+          echo "UUID=$uuid /var/lib/docker ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+        fi
+        systemctl daemon-reload
+        mountpoint -q /var/lib/docker || mount /var/lib/docker
+      fi
+
+      # --- docker -----------------------------------------------------------
+      # Installed after the mount so the image/volume data lands on the block
+      # volume from the start.
+      if ! command -v docker >/dev/null 2>&1; then
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+          -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        arch="$(dpkg --print-architecture)"
+        codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+        echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $codename stable" \
+          > /etc/apt/sources.list.d/docker.list
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+          docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      fi
+      systemctl enable --now docker
+
+      for u in root ubuntu; do
+        id "$u" >/dev/null 2>&1 && usermod -aG docker "$u" || true
+      done
+
+      install -d -m 0755 /opt/openseafeed
+      echo "osf-bootstrap: done — rsync the repo to /opt/openseafeed next (docs/production.md)"
+
+runcmd:
+  - [bash, /usr/local/sbin/osf-bootstrap.sh]

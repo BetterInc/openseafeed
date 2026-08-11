@@ -1,6 +1,7 @@
 # OpenSeaFeed developer Makefile.
 # Everything here is reproducible on a laptop: local stack via docker compose,
 # plus the usual cargo workflows.
+# Production is deliberately not driven from here — see docs/production.md.
 
 COMPOSE ?= docker compose
 # ALL profiles, so `make dev-down` never orphans feed connectors (a plain

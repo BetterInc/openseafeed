@@ -5,6 +5,11 @@ JetStream. Everything here is reproducible: a laptop runs the whole stack via
 docker compose, and production is a Scaleway Kapsule cluster provisioned with
 OpenTofu and deployed with plain kustomize manifests.
 
+> Two supported routes: **one instance** running this compose stack behind Caddy
+> ([production.md](production.md)) and the **Kubernetes** path below — pick by
+> scale. (openseafeed.com itself rides on a pre-existing shared Kapsule cluster
+> managed from a private infra repo; see the note at the top of production.md.)
+
 ## Local development
 
 ```sh

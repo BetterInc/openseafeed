@@ -1,0 +1,81 @@
+# OpenSeaFeed public edge (single-box production).
+#
+# Replace openseafeed.com with your domain — three A records, all pointing at
+# the instance IP (see `tofu output dns_records` in deploy/tofu-instance):
+#
+#   stream.openseafeed.com  -> fanout       live WebSocket + the live map
+#   api.openseafeed.com     -> snapshotter / archiver / control  (path-routed)
+#   ingest.openseafeed.com  -> ingest       WSS feed intake
+#
+# Caddy obtains and renews Let's Encrypt certificates automatically for every
+# hostname named here (port 80 must be reachable for the HTTP-01 challenge; it
+# also serves the redirect to HTTPS). WebSockets need no special
+# configuration in Caddy 2 — reverse_proxy upgrades them transparently, with no
+# idle timeout to raise.
+#
+# Backends are compose service names on the internal network; none of them
+# publish host ports in production (see docker-compose.prod.yml).
+{
+	# ACME registration contact — expiry/problem notices go here.
+	email admin@openseafeed.com
+
+	# No HTTP/3: the instance security group opens 443/tcp only, so advertising
+	# h3 over UDP would just make clients try an unreachable path and fall back.
+	servers {
+		protocols h1 h2
+	}
+}
+
+# --- Live stream + map -----------------------------------------------------
+stream.openseafeed.com {
+	log
+	encode zstd gzip
+	# WS /v1/stream, the live map at /, /healthz.
+	reverse_proxy fanout:8081
+}
+
+# --- Public API ------------------------------------------------------------
+# One hostname, three backends. Order matters: the bare `handle` is the
+# fallback, so it must come last.
+api.openseafeed.com {
+	log
+	encode zstd gzip
+
+	# Current fleet state.
+	handle /v1/snapshot* {
+		reverse_proxy snapshotter:8082
+	}
+	handle /v1/vessels* {
+		reverse_proxy snapshotter:8082
+	}
+
+	# History out of ClickHouse (cold-tier queries can be slow — the archiver
+	# owns its own timeouts, Caddy just waits).
+	handle /v1/history* {
+		reverse_proxy archiver:8084
+	}
+
+	# Everything else: accounts, OAuth callbacks (/auth/*), API keys, the
+	# dashboard, /v1/internal/*.
+	handle {
+		reverse_proxy control:8083
+	}
+}
+
+# --- Feed intake -----------------------------------------------------------
+# WSS /v1/ingest for connectors that cannot use raw TCP (browsers, restrictive
+# networks). Plain NMEA over TCP does not pass through Caddy at all: it is
+# published straight from the ingest container on 10111.
+ingest.openseafeed.com {
+	log
+	reverse_proxy ingest:8080
+}
+
+# --- Optional: apex/www landing page ---------------------------------------
+# The control plane serves the landing page and dashboard at /. Uncomment and
+# add matching A records to serve them on the apex too.
+# openseafeed.com, www.openseafeed.com {
+# 	log
+# 	encode zstd gzip
+# 	reverse_proxy control:8083
+# }

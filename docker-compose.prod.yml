@@ -1,0 +1,167 @@
+# OpenSeaFeed — production overlay for the single-box deploy.
+#
+# Always used ON TOP of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# .env.production.example sets COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml,
+# so on the box a plain `docker compose up -d --build` picks up both files.
+# Runbook: docs/production.md.
+#
+# What this overlay changes:
+#   - Caddy in front, terminating TLS for stream./api./ingest. (deploy/caddy).
+#   - No host ports except ingest 10111/tcp: every HTTP service is reachable
+#     only through Caddy on the internal network, ClickHouse not at all.
+#   - No UDP ingest (OSF_ALLOW_ANON_UDP=0) — anonymous UDP is a dev/LAN thing.
+#   - Real key validation against the control plane (OSF_KEYS_MODE=http).
+#   - ClickHouse tiered storage: hot on the local block volume, cold on Wasabi.
+
+# Prod defaults shared by every app service. Merged with the base file's
+# x-app-env per service, so only the differences live here.
+x-prod-env: &prod-env
+  # Validate API/feed keys against the control plane instead of accepting any
+  # well-formed key.
+  OSF_KEYS_MODE: http
+
+x-clickhouse-creds: &clickhouse-creds
+  OSF_CLICKHOUSE_PASSWORD: ${OSF_CLICKHOUSE_PASSWORD:?put a strong password in .env}
+
+services:
+  # --- Public edge ---------------------------------------------------------
+  # Automatic Let's Encrypt certificates for every hostname in the Caddyfile.
+  # Port 80 must stay open: it serves the HTTP-01 challenge and the redirect.
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys — losing this volume means
+      # re-issuing everything (and Let's Encrypt rate limits apply).
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - fanout
+      - snapshotter
+      - control
+      - archiver
+    restart: unless-stopped
+
+  ingest:
+    environment:
+      <<: *prod-env
+      # No anonymous UDP intake in production; feeds authenticate over
+      # TCP 10111 or WSS /v1/ingest.
+      OSF_ALLOW_ANON_UDP: "0"
+    # !override, not a plain list: compose APPENDS port lists across files, so
+    # without it the base file's 10110/udp and 8080 would still be published.
+    # (Same reason the other services use `!reset` below.)
+    ports: !override
+      # The one host port that is not HTTP: raw NMEA over TCP, published on all
+      # interfaces for off-box connectors and receivers. :8080 is dropped —
+      # Caddy reaches it over the compose network as ingest.<domain>.
+      - "10111:10111"
+
+  pipeline:
+    environment:
+      <<: *prod-env
+
+  fanout:
+    environment:
+      <<: *prod-env
+      # Serve the live map compiled into the image, not the bind-mounted file:
+      # an empty value falls through to the embedded copy, so a deploy is
+      # whatever was built, not whatever is in web/ on disk.
+      OSF_LIVE_HTML: ""
+    ports: !reset []
+
+  snapshotter:
+    environment:
+      <<: *prod-env
+    ports: !reset []
+
+  control:
+    environment:
+      <<: *prod-env
+      # Base URL the OAuth redirect URIs are built from. Without it control
+      # falls back to http://localhost:8083 and every login bounces to
+      # localhost — the value must match the callback URLs registered with
+      # GitHub/Google (https://api.<domain>/auth/<provider>/callback).
+      OSF_PUBLIC_URL: ${OSF_PUBLIC_URL:?the public https:// base URL of the control plane, e.g. https://api.openseafeed.com}
+      # Real secrets, no dev fallbacks: compose refuses to start without them.
+      OSF_SESSION_SECRET: ${OSF_SESSION_SECRET:?generate one with `openssl rand -hex 32`}
+    ports: !reset []
+
+  clickhouse:
+    environment:
+      CLICKHOUSE_PASSWORD: ${OSF_CLICKHOUSE_PASSWORD:?put a strong password in .env}
+    configs:
+      # Appended to the base file's clickhouse-listen config.
+      - source: clickhouse-storage
+        target: /etc/clickhouse-server/config.d/storage.xml
+    # Internal only — ClickHouse is never published, not even on localhost.
+    # Query it with: docker compose exec clickhouse clickhouse-client ...
+    ports: !reset []
+
+  archiver:
+    environment:
+      <<: [*prod-env, *clickhouse-creds]
+      # Enables `TTL ... TO VOLUME 'cold'` in the schema the archiver creates,
+      # which requires the `tiered` storage policy configured below.
+      # NOTE: TTLs are baked in at table creation — changing OSF_HOT_DAYS /
+      # OSF_RETAIN_DAYS later needs a manual ALTER (docs/deploy.md).
+      OSF_CLICKHOUSE_TIERED: "1"
+      OSF_HOT_DAYS: ${OSF_HOT_DAYS:-7}
+      OSF_RETAIN_DAYS: ${OSF_RETAIN_DAYS:-1825}
+    ports: !reset []
+
+  # Denmark history backfill (profile dma-history). Production pulls the whole
+  # backfill window instead of one file per poll.
+  dma-import:
+    environment:
+      <<: *clickhouse-creds
+      OSF_DMA_BACKFILL_DAYS: ${OSF_DMA_BACKFILL_DAYS:-7}
+      OSF_DMA_MAX_FILES: ${OSF_DMA_MAX_FILES:-0}
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+configs:
+  # ClickHouse tiered storage: recent parts on the local block volume, aged
+  # parts moved to Wasabi by the archiver's TTL rules and still queryable
+  # through the same table. The policy MUST be named `tiered` with a `cold`
+  # volume — that is what services/archiver/src/schema.rs asks for.
+  #
+  # Credentials are interpolated from .env at `docker compose up` time; nothing
+  # secret is committed. To run WITHOUT the cold tier: set
+  # OSF_CLICKHOUSE_TIERED=0 on archiver above and comment out the clickhouse
+  # `configs` entry.
+  clickhouse-storage:
+    content: |
+      <clickhouse>
+        <storage_configuration>
+          <disks>
+            <s3_cold>
+              <type>s3</type>
+              <endpoint>${OSF_WASABI_ENDPOINT:-https://s3.eu-central-2.wasabisys.com}/${OSF_WASABI_BUCKET:?Wasabi cold-tier bucket, see docs/production.md}/ais-cold/</endpoint>
+              <access_key_id>${OSF_WASABI_ACCESS_KEY:?Wasabi access key, see docs/production.md}</access_key_id>
+              <secret_access_key>${OSF_WASABI_SECRET_KEY:?Wasabi secret key, see docs/production.md}</secret_access_key>
+            </s3_cold>
+          </disks>
+          <policies>
+            <tiered>
+              <volumes>
+                <hot>
+                  <disk>default</disk>
+                </hot>
+                <cold>
+                  <disk>s3_cold</disk>
+                  <!-- Merging cold parts would re-download and re-upload them. -->
+                  <prefer_not_to_merge>true</prefer_not_to_merge>
+                </cold>
+              </volumes>
+            </tiered>
+          </policies>
+        </storage_configuration>
+      </clickhouse>

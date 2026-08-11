@@ -6,6 +6,7 @@ coverage.*
 .env
 .env.*
 !.env.example
+!.env.production.example
 /web/node_modules/
 .terraform/
 *.tfstate
