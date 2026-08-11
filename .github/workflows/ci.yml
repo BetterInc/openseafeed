@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR builds, but never a main push: that would abort the
+  # deploy job mid-rollout and leave the namespace on a mix of image tags.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,7 +46,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/bram-projects/openseafeed
+      IMAGE: ghcr.io/brammittendorff/openseafeed
     steps:
       - uses: actions/checkout@v4
 
@@ -85,3 +87,100 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Roll the workloads on the shared Kapsule cluster. The Deployments,
+  # StatefulSets, Services, Ingresses and ConfigMaps are all owned by the infra
+  # repo (projects-infrastructure modules/openseafeed), which sets
+  # lifecycle.ignore_changes on every image field precisely so this job owns the
+  # tag. CI never creates or deletes objects here - it only re-points images.
+  deploy:
+    name: Deploy to Kapsule
+    needs: docker
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production # gates KUBECONFIG to this job
+    permissions:
+      contents: read
+    env:
+      # Matches `type=sha,format=long` from the docker job's metadata step.
+      IMAGE: ghcr.io/brammittendorff/openseafeed
+      TAG: sha-${{ github.sha }}
+    steps:
+      - name: Guard - KUBECONFIG present?
+        id: guard
+        env:
+          KC: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [[ -z "$KC" ]]; then
+            echo "::warning::KUBECONFIG not set on the production env - skipping deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install kubectl
+        if: steps.guard.outputs.skip != 'true'
+        uses: azure/setup-kubectl@v4
+        with: { version: v1.34.0 }
+
+      - name: Write kubeconfig
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          KC: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          if echo "$KC" | base64 -d 2>/dev/null | grep -q "apiVersion"; then
+            echo "$KC" | base64 -d > ~/.kube/config
+          else
+            printf '%s' "$KC" > ~/.kube/config
+          fi
+          chmod 600 ~/.kube/config
+
+      # archiver first: it applies the ClickHouse schema migrations at startup,
+      # so a schema-changing release must land there before the services that
+      # read through it.
+      - name: Roll archiver, then the rest
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE}:${TAG}"
+          NS=openseafeed
+
+          roll() { # roll <deployment> <container>
+            kubectl -n "$NS" set image "deployment/$1" "$2=$IMG"
+            kubectl -n "$NS" rollout status "deployment/$1" --timeout=300s
+          }
+
+          roll archiver archiver
+          roll pipeline pipeline
+          roll ingest ingest
+          roll fanout fanout
+          roll snapshotter snapshotter
+          roll control control
+          roll worker-norway worker
+          roll worker-finland worker
+
+          # dma-import ships at 0 replicas (see var.dma_import_replicas), so
+          # there is nothing to wait for - just keep its image current for
+          # whenever it is scaled up.
+          kubectl -n "$NS" set image deployment/dma-import dma-import="$IMG"
+
+      # /healthz returns a bare "ok" with no version field, so the real proof
+      # that the new image is live is `rollout status` above. This just confirms
+      # the public endpoints answer afterwards.
+      - name: Smoke-test the public endpoints
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          for url in https://api.openseafeed.com/healthz \
+                     https://stream.openseafeed.com/healthz; do
+            for i in $(seq 1 12); do
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)
+              echo "[$i/12] $url -> $CODE"
+              [[ "$CODE" == "200" ]] && break
+              if [[ $i == 12 ]]; then
+                echo "::error::$url never returned 200"; exit 1
+              fi
+              sleep 5
+            done
+          done
