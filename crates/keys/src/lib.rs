@@ -40,10 +40,8 @@ pub fn kind_of(key: &str) -> Option<Kind> {
         (Kind::Live, r)
     } else if let Some(r) = key.strip_prefix("osf_stn_") {
         (Kind::Station, r)
-    } else if let Some(r) = key.strip_prefix("osf_feed_") {
-        (Kind::Feed, r)
     } else {
-        return None;
+        (Kind::Feed, key.strip_prefix("osf_feed_")?)
     };
     if rest.len() >= 8 && rest.chars().all(|c| c.is_ascii_alphanumeric()) {
         Some(kind)
