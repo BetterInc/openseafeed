@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # Release tags exist so the multi-arch build has somewhere to live that is
+    # not the deploy path - see the platforms: comment in the docker job.
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -46,7 +49,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/brammittendorff/openseafeed
+      IMAGE: ghcr.io/betterinc/openseafeed
     steps:
       - uses: actions/checkout@v4
 
@@ -57,8 +60,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        # Only need registry credentials when we actually push (main).
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        # Only need registry credentials when we actually push: main or a v* tag.
+        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -73,16 +76,24 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,format=long
+            type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          # PRs and non-main pushes build for amd64 only (fast validation).
-          # main pushes build multi-arch and publish to GHCR.
-          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-          platforms: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'push') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          # Publish from main pushes AND release tags; PRs build only.
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          # amd64 only on the deploy path. arm64 used to be built on every main
+          # push, which meant cross-compiling this Rust workspace under QEMU -
+          # measured at over 50 minutes, and the deploy job waits on it. The
+          # Kapsule nodes are amd64, so none of that time bought anything for
+          # production.
+          #
+          # arm64 still matters for the self-host route in docs/production.md,
+          # so it is built for release tags, where a slow build is fine.
+          platforms: ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -103,7 +114,7 @@ jobs:
       contents: read
     env:
       # Matches `type=sha,format=long` from the docker job's metadata step.
-      IMAGE: ghcr.io/brammittendorff/openseafeed
+      IMAGE: ghcr.io/betterinc/openseafeed
       TAG: sha-${{ github.sha }}
     steps:
       - name: Guard - KUBECONFIG present?
