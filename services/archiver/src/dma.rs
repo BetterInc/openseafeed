@@ -44,9 +44,8 @@ impl Config {
     pub fn from_env() -> Self {
         Self {
             url: std::env::var("OSF_DMA_URL").unwrap_or_else(|_| "http://aisdata.ais.dk/".into()),
-            list_url: std::env::var("OSF_DMA_LIST_URL").unwrap_or_else(|_| {
-                "http://aisdata.ais.dk.s3.eu-central-1.amazonaws.com/".into()
-            }),
+            list_url: std::env::var("OSF_DMA_LIST_URL")
+                .unwrap_or_else(|_| "http://aisdata.ais.dk.s3.eu-central-1.amazonaws.com/".into()),
             poll: Duration::from_secs(env_num("OSF_DMA_POLL_SECS", 3600u64)),
             // DMA publishes each day's file ~3 days later, so the window
             // must comfortably exceed that lag.
@@ -67,7 +66,11 @@ pub async fn run(ch: Arc<ClickHouse>, cfg: Config) -> anyhow::Result<()> {
         // and integrity-checked only loosely (it's a bulk historical dump).
         .danger_accept_invalid_certs(true)
         .build()?;
-    tracing::info!(url = cfg.url, poll_secs = cfg.poll.as_secs(), "dma importer starting");
+    tracing::info!(
+        url = cfg.url,
+        poll_secs = cfg.poll.as_secs(),
+        "dma importer starting"
+    );
 
     loop {
         if let Err(e) = poll_once(&ch, &http, &cfg).await {
@@ -88,7 +91,10 @@ async fn poll_once(ch: &ClickHouse, http: &reqwest::Client, cfg: &Config) -> any
     let mut files = Vec::new();
     let mut token: Option<String> = None;
     loop {
-        let mut params = vec![("list-type", "2".to_string()), ("delimiter", "/".to_string())];
+        let mut params = vec![
+            ("list-type", "2".to_string()),
+            ("delimiter", "/".to_string()),
+        ];
         if let Some(t) = &token {
             params.push(("continuation-token", t.clone()));
         }
@@ -167,7 +173,11 @@ fn plan_imports(
     files.sort();
     files.dedup();
     files.reverse();
-    let cap = if max_files == 0 { usize::MAX } else { max_files };
+    let cap = if max_files == 0 {
+        usize::MAX
+    } else {
+        max_files
+    };
     files
         .into_iter()
         .filter(|(date, name)| *date >= cutoff && !done.contains(name))
@@ -194,11 +204,7 @@ async fn imported_files(ch: &ClickHouse) -> anyhow::Result<std::collections::Has
     Ok(text.lines().map(str::to_string).collect())
 }
 
-async fn import_file(
-    http: &reqwest::Client,
-    cfg: &Config,
-    name: &str,
-) -> anyhow::Result<u64> {
+async fn import_file(http: &reqwest::Client, cfg: &Config, name: &str) -> anyhow::Result<u64> {
     // 1. Download to a temp file (zips are GB-scale; the central directory
     //    sits at the end, so streaming decode isn't possible).
     let path = cfg.tmp_dir.join(name);
@@ -215,7 +221,12 @@ async fn import_file(
         file.write_all(&chunk).await?;
         got += chunk.len() as u64;
         if last_log.elapsed() > Duration::from_secs(30) {
-            tracing::info!(file = name, mb = got / 1_048_576, total_mb = total / 1_048_576, "downloading");
+            tracing::info!(
+                file = name,
+                mb = got / 1_048_576,
+                total_mb = total / 1_048_576,
+                "downloading"
+            );
             last_log = std::time::Instant::now();
         }
     }
@@ -231,7 +242,11 @@ async fn import_file(
         let f = std::fs::File::open(&path2)?;
         let mut zip = zip::ZipArchive::new(f)?;
         let idx = (0..zip.len())
-            .find(|&i| zip.by_index(i).map(|e| e.name().ends_with(".csv")).unwrap_or(false))
+            .find(|&i| {
+                zip.by_index(i)
+                    .map(|e| e.name().ends_with(".csv"))
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| anyhow::anyhow!("no csv entry in zip"))?;
         let entry = zip.by_index(idx)?;
         import_csv(&rt, &ch2, entry, rows_per_sec)
@@ -278,8 +293,12 @@ fn import_csv(
     for rec in rdr.records() {
         let Ok(rec) = rec else { continue };
         let get = |i: Option<usize>| i.and_then(|i| rec.get(i)).unwrap_or("").trim();
-        let Some(ts) = parse_dma_ts(get(Some(c_ts))) else { continue };
-        let Ok(mmsi) = get(Some(c_mmsi)).parse::<u32>() else { continue };
+        let Some(ts) = parse_dma_ts(get(Some(c_ts))) else {
+            continue;
+        };
+        let Ok(mmsi) = get(Some(c_mmsi)).parse::<u32>() else {
+            continue;
+        };
         let (Ok(lat), Ok(lon)) = (
             get(Some(c_lat)).parse::<f64>(),
             get(Some(c_lon)).parse::<f64>(),
@@ -399,8 +418,7 @@ mod tests {
 
         // Listing: daily files from 9 to 3 days old (DMA's usual lag),
         // handed over unsorted like a raw listing could be.
-        let mut files: Vec<(NaiveDate, String)> =
-            (3..=9).map(|n| (day(n), name(day(n)))).collect();
+        let mut files: Vec<(NaiveDate, String)> = (3..=9).map(|n| (day(n), name(day(n)))).collect();
         files.swap(0, 4);
         // One mid-window file already imported.
         let done: std::collections::HashSet<String> = [name(day(5))].into();

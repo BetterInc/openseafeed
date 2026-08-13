@@ -21,9 +21,15 @@ fn test_state() -> AppState {
 async fn seed_user(state: &AppState) -> (String, String) {
     let user_id = {
         let conn = state.db.lock().await;
-        db::create_user(&conn, Some("skipper@example.com"), None, None, Some("Skipper"))
-            .expect("create user")
-            .id
+        db::create_user(
+            &conn,
+            Some("skipper@example.com"),
+            None,
+            None,
+            Some("Skipper"),
+        )
+        .expect("create user")
+        .id
     };
     let cookie = format!(
         "{}={}",
@@ -42,7 +48,12 @@ async fn body_json(resp: axum::response::Response) -> Value {
 async fn healthz_ok() {
     let app = router(test_state());
     let resp = app
-        .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -52,7 +63,12 @@ async fn healthz_ok() {
 async fn me_requires_session() {
     let app = router(test_state());
     let resp = app
-        .oneshot(Request::builder().uri("/v1/me").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/v1/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -123,7 +139,10 @@ async fn internal_endpoint_rejects_bad_token() {
         )
         .await
         .unwrap();
-    let key = body_json(created).await["key"].as_str().unwrap().to_string();
+    let key = body_json(created).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Wrong token -> 401.
     let resp = app
@@ -171,7 +190,10 @@ async fn revoked_key_is_invalid() {
         )
         .await
         .unwrap();
-    let key = body_json(created).await["key"].as_str().unwrap().to_string();
+    let key = body_json(created).await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Revoke it.
     let resp = app
@@ -236,7 +258,9 @@ async fn station_registration_and_tier_flip() {
                 .uri("/v1/stations")
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"name":"Rotterdam Roof","lat":51.9,"lon":4.5}"#))
+                .body(Body::from(
+                    r#"{"name":"Rotterdam Roof","lat":51.9,"lon":4.5}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -339,7 +363,7 @@ async fn magic_link_round_trip() {
         let conn = state.db.lock().await;
         conn.query_row(
             "SELECT token FROM magic_tokens WHERE email = ?1",
-            [ "newcomer@example.com" ],
+            ["newcomer@example.com"],
             |r| r.get::<_, String>(0),
         )
         .unwrap()

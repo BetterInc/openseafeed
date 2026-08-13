@@ -11,8 +11,8 @@ pub use bits::Bits;
 pub use decode::{decode, decode_bits};
 pub use encode::{
     encode_aids_to_navigation, encode_base_station_report, encode_long_range,
-    encode_position_report, encode_sar_aircraft, encode_ship_static_data,
-    encode_standard_class_b, encode_static_data_report, BitsMut,
+    encode_position_report, encode_sar_aircraft, encode_ship_static_data, encode_standard_class_b,
+    encode_static_data_report, BitsMut,
 };
 pub use types::*;
 

@@ -139,13 +139,11 @@ fn header_f64(hdrs: &async_nats::HeaderMap, name: &str) -> Option<f64> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let nats_url =
-        std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let nats_url = std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
     let nats = async_nats::connect(&nats_url).await?;
     tracing::info!(nats_url, "fanout connected to nats");
 

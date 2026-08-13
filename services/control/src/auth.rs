@@ -49,14 +49,9 @@ fn redirect_uri(state: &AppState, provider: &str) -> String {
 /// Redirect to a provider's authorize endpoint, planting the CSRF state
 /// cookie on the way out.
 fn start_redirect(authorize_url: String, state_value: &str) -> Response {
-    let cookie = format!(
-        "{STATE_COOKIE}={state_value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600"
-    );
-    (
-        [(header::SET_COOKIE, cookie)],
-        Redirect::to(&authorize_url),
-    )
-        .into_response()
+    let cookie =
+        format!("{STATE_COOKIE}={state_value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600");
+    ([(header::SET_COOKIE, cookie)], Redirect::to(&authorize_url)).into_response()
 }
 
 /// Read back the CSRF state cookie and confirm it matches what the provider
@@ -188,7 +183,10 @@ async fn github_exchange(
     // Primary email is a separate call unless the profile email is public.
     let email = match gh.email {
         Some(e) => Some(e),
-        None => github_primary_email(state, &token.access_token).await.ok().flatten(),
+        None => github_primary_email(state, &token.access_token)
+            .await
+            .ok()
+            .flatten(),
     };
 
     let display = gh.name.or(gh.login);

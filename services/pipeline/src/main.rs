@@ -54,13 +54,11 @@ impl Enrichment {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let nats_url =
-        std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let nats_url = std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
     let client = async_nats::connect(&nats_url).await?;
     tracing::info!(nats_url, "pipeline connected");
 
@@ -83,8 +81,7 @@ async fn main() -> anyhow::Result<()> {
         };
         stats.received += 1;
 
-        if let Err(e) = handle(&client, &msg.payload, &mut window, &mut enrich, &mut stats).await
-        {
+        if let Err(e) = handle(&client, &msg.payload, &mut window, &mut enrich, &mut stats).await {
             stats.decode_errors += 1;
             tracing::debug!(error = %e, "message dropped");
         }

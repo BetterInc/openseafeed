@@ -341,8 +341,7 @@ fn row_to_station(row: &rusqlite::Row) -> rusqlite::Result<Station> {
     })
 }
 
-const STATION_COLS: &str =
-    "id, user_id, name, lat, lon, key, created_at, last_seen_at, msgs_total";
+const STATION_COLS: &str = "id, user_id, name, lat, lon, key, created_at, last_seen_at, msgs_total";
 
 /// Register a station together with its own `osf_stn_` key, in one
 /// transaction so a station never exists without a usable key.

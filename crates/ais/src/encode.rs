@@ -86,7 +86,11 @@ impl BitsMut {
                     v |= 1;
                 }
             }
-            out.push(if v < 40 { (v + 48) as char } else { (v + 56) as char });
+            out.push(if v < 40 {
+                (v + 48) as char
+            } else {
+                (v + 56) as char
+            });
         }
         (out, fill as u8)
     }
@@ -455,20 +459,20 @@ mod tests {
         // Every payload from the pyais-validated golden set: decoding the
         // re-encoded payload must yield an identical packet.
         let vectors: &[(&str, u8)] = &[
-            ("177KQJ5000G?tO`K>RA1wUbN0TKH", 0),                       // 1
-            ("35Ml=50Oh@o?vlHDS6`AS0rR0000", 0),                       // 3
-            ("402;rFiv@k;tmK`GJDTIS?vN20S:", 0),                       // 4
+            ("177KQJ5000G?tO`K>RA1wUbN0TKH", 0), // 1
+            ("35Ml=50Oh@o?vlHDS6`AS0rR0000", 0), // 3
+            ("402;rFiv@k;tmK`GJDTIS?vN20S:", 0), // 4
             (
                 "55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E531@0000000000000",
                 2,
-            ),                                                          // 5
-            ("91b55wi;hbOS@OdQAC062Ch2089h", 0),                       // 9
-            ("B52K>;h00Fc>jpUlNV@ikwpUoP06", 0),                       // 18
+            ), // 5
+            ("91b55wi;hbOS@OdQAC062Ch2089h", 0), // 9
+            ("B52K>;h00Fc>jpUlNV@ikwpUoP06", 0), // 18
             ("C5N3SRgPEnJGEBT>NhWAwwo862PaLELTBJ:V00000000S0D:R220", 0), // 19
-            ("E>k`sO70VQ97aRh1T0W72V@611@=FVj<;V5d@00003v010", 4),     // 21
-            ("H52KNe@Pm>0Htt0000000000000", 2),                        // 24A
-            ("H3pro:4q3?=1B0000000000P7220", 0),                       // 24B
-            ("KC5E2b@U19PFdLbMuc5=ROv62<7m", 0),                       // 27
+            ("E>k`sO70VQ97aRh1T0W72V@611@=FVj<;V5d@00003v010", 4), // 21
+            ("H52KNe@Pm>0Htt0000000000000", 2),  // 24A
+            ("H3pro:4q3?=1B0000000000P7220", 0), // 24B
+            ("KC5E2b@U19PFdLbMuc5=ROv62<7m", 0), // 27
         ];
         for (payload, fill) in vectors {
             let m1 = decode(payload, *fill).unwrap();

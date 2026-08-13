@@ -196,7 +196,11 @@ impl Validator {
         };
         Some(KeyInfo {
             kind,
-            tier: if v.tier.is_empty() { "free".into() } else { v.tier },
+            tier: if v.tier.is_empty() {
+                "free".into()
+            } else {
+                v.tier
+            },
             owner_id: v.owner_id,
             station_id: v.station_id,
         })

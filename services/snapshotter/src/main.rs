@@ -79,13 +79,11 @@ fn now_ms() -> u64 {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let nats_url =
-        std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let nats_url = std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
     let nats = async_nats::connect(&nats_url).await?;
     tracing::info!(nats_url, "snapshotter connected to nats");
 
@@ -253,7 +251,10 @@ struct KeyParam {
     key: Option<String>,
 }
 
-async fn authed_tier(app: &App, key: &Option<String>) -> Result<String, (StatusCode, &'static str)> {
+async fn authed_tier(
+    app: &App,
+    key: &Option<String>,
+) -> Result<String, (StatusCode, &'static str)> {
     let key = key
         .as_deref()
         .ok_or((StatusCode::UNAUTHORIZED, "missing ?key="))?;
@@ -265,10 +266,7 @@ async fn authed_tier(app: &App, key: &Option<String>) -> Result<String, (StatusC
     Ok(info.tier)
 }
 
-async fn get_snapshot(
-    State(app): State<Arc<App>>,
-    Query(q): Query<KeyParam>,
-) -> impl IntoResponse {
+async fn get_snapshot(State(app): State<Arc<App>>, Query(q): Query<KeyParam>) -> impl IntoResponse {
     let tier = match authed_tier(&app, &q.key).await {
         Ok(t) => t,
         Err(e) => return e.into_response(),

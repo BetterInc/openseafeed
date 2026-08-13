@@ -236,6 +236,8 @@ mod tests {
         let bbox = BBox::from_corners((51.8, 3.9), (52.1, 4.6));
         let cells = cover(&bbox, 4, 64);
         let sydney = encode(-33.85, 151.2, 4);
-        assert!(!cells.iter().any(|p| !p.is_empty() && sydney.starts_with(p.as_str())));
+        assert!(!cells
+            .iter()
+            .any(|p| !p.is_empty() && sydney.starts_with(p.as_str())));
     }
 }

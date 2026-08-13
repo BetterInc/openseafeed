@@ -296,9 +296,25 @@ mod tests {
         assert_eq!(s.destination, "HELSINKI");
         assert_eq!(s.imo_number, 9_074_729);
         assert_eq!(s.ship_type, 60);
-        assert_eq!(s.dimension, Dimension { a: 100, b: 103, c: 15, d: 17 });
+        assert_eq!(
+            s.dimension,
+            Dimension {
+                a: 100,
+                b: 103,
+                c: 15,
+                d: 17
+            }
+        );
         assert!((s.maximum_static_draught - 7.1).abs() < 0.05);
-        assert_eq!(s.eta, Eta { month: 7, day: 25, hour: 6, minute: 30 });
+        assert_eq!(
+            s.eta,
+            Eta {
+                month: 7,
+                day: 25,
+                hour: 6,
+                minute: 30
+            }
+        );
     }
 
     #[test]

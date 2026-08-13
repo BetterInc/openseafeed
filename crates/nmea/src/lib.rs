@@ -143,8 +143,9 @@ mod tests {
     fn strips_tag_block() {
         // TAG block checksum content is not validated (some feeds get it wrong);
         // the sentence checksum is.
-        let s = parse("\\s:2573135,c:1671620143*0B\\!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C")
-            .unwrap();
+        let s =
+            parse("\\s:2573135,c:1671620143*0B\\!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C")
+                .unwrap();
         assert_eq!(s.tag_block.as_deref(), Some("s:2573135,c:1671620143*0B"));
         assert_eq!(s.payload, "177KQJ5000G?tO`K>RA1wUbN0TKH");
     }

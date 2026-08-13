@@ -111,13 +111,11 @@ fn now_ms() -> u64 {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let nats_url =
-        std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let nats_url = std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
     let nats = async_nats::connect(&nats_url).await?;
     tracing::info!(nats_url, "ingest connected to nats");
 
@@ -130,7 +128,9 @@ async fn main() -> anyhow::Result<()> {
     let udp_addr = std::env::var("OSF_UDP_ADDR").unwrap_or_else(|_| "0.0.0.0:10110".into());
     let tcp_addr = std::env::var("OSF_TCP_ADDR").unwrap_or_else(|_| "0.0.0.0:10111".into());
     let http_addr = std::env::var("OSF_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
-    let allow_anon_udp = std::env::var("OSF_ALLOW_ANON_UDP").map(|v| v == "1").unwrap_or(true);
+    let allow_anon_udp = std::env::var("OSF_ALLOW_ANON_UDP")
+        .map(|v| v == "1")
+        .unwrap_or(true);
 
     if allow_anon_udp {
         tracing::warn!(udp_addr, "anonymous UDP ingest enabled (dev/LAN mode)");
@@ -196,7 +196,8 @@ async fn udp_listener(app: Arc<App>, addr: String) {
             .or_insert_with(|| (Assembler::default(), Instant::now()));
         entry.1 = Instant::now();
         for line in text.lines() {
-            app.handle_line(&mut entry.0, line, &station, "udp-anon").await;
+            app.handle_line(&mut entry.0, line, &station, "udp-anon")
+                .await;
         }
         if last_sweep.elapsed() > Duration::from_secs(60) {
             assemblers.retain(|_, (_, seen)| seen.elapsed() < Duration::from_secs(300));

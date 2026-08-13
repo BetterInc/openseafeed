@@ -74,7 +74,10 @@ async fn forwards_only_valid_lines_end_to_end() {
     received.sort();
     let mut expected: Vec<String> = VALID.iter().map(|s| s.to_string()).collect();
     expected.sort();
-    assert_eq!(received, expected, "exactly the 3 valid lines should arrive");
+    assert_eq!(
+        received, expected,
+        "exactly the 3 valid lines should arrive"
+    );
 
     use std::sync::atomic::Ordering;
     assert_eq!(stats.invalid.load(Ordering::Relaxed), 1, "one invalid line");

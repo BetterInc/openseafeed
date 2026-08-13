@@ -34,7 +34,10 @@ struct Frame {
 }
 
 enum Convert {
-    Lines { kind: String, lines: Vec<String> },
+    Lines {
+        kind: String,
+        lines: Vec<String>,
+    },
     /// Bad JSON, an unrecognized message type, or a type we can't encode
     /// (`Unknown`). Expected to be near zero against a live feed.
     Failed,

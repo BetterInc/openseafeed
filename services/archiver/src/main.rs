@@ -59,8 +59,7 @@ pub(crate) struct StaticRow {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -84,8 +83,7 @@ async fn main() -> anyhow::Result<()> {
         return dma::run(ch, dma::Config::from_env()).await;
     }
 
-    let nats_url =
-        std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let nats_url = std::env::var("OSF_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
     let nats = async_nats::connect(&nats_url).await?;
     let mut sub = nats
         .queue_subscribe("ais.decoded.>", "archiver".into())
@@ -141,7 +139,14 @@ async fn main() -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => break,
         }
     }
-    flush(&ch, &mut positions, &mut statics, &mut written, &mut dropped).await;
+    flush(
+        &ch,
+        &mut positions,
+        &mut statics,
+        &mut written,
+        &mut dropped,
+    )
+    .await;
     tracing::info!(written, dropped, "archiver shutting down");
     Ok(())
 }
@@ -154,7 +159,11 @@ fn collect(
 ) {
     let ts = DateTime::parse_from_rfc3339(&sm.metadata.time_utc)
         .map(|t| t.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
-        .unwrap_or_else(|_| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string());
+        .unwrap_or_else(|_| {
+            chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        });
     let p = sm.message.get(&sm.message_type);
 
     let f = |k: &str| p.and_then(|v| v.get(k)).and_then(|x| x.as_f64());

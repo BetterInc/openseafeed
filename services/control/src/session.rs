@@ -57,9 +57,7 @@ pub fn verify(secret: &[u8], value: &str) -> Option<String> {
 pub fn set_cookie_header(secret: &[u8], user_id: &str) -> String {
     let value = issue(secret, user_id);
     let max_age = SESSION_DAYS * 24 * 60 * 60;
-    format!(
-        "{COOKIE_NAME}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}"
-    )
+    format!("{COOKIE_NAME}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
 }
 
 /// A `Set-Cookie` header value that clears the session (used on logout).

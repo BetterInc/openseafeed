@@ -279,7 +279,10 @@ fn dimension(bs: &Bits, start: usize) -> Dimension {
 }
 
 fn valid_position(lat: f64, lon: f64) -> Option<(f64, f64)> {
-    if lat == LAT_NA || lon == LON_NA || !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon)
+    if lat == LAT_NA
+        || lon == LON_NA
+        || !(-90.0..=90.0).contains(&lat)
+        || !(-180.0..=180.0).contains(&lon)
     {
         None
     } else {

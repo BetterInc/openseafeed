@@ -54,12 +54,7 @@ async fn read_tcp(
     Ok(())
 }
 
-async fn read_ws(
-    url: &str,
-    queue: &LineQueue,
-    stats: &Stats,
-    backoff: &mut Backoff,
-) -> Result<()> {
+async fn read_ws(url: &str, queue: &LineQueue, stats: &Stats, backoff: &mut Backoff) -> Result<()> {
     let (ws, _resp) = tokio_tungstenite::connect_async(url)
         .await
         .with_context(|| format!("connecting to {url}"))?;

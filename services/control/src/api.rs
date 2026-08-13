@@ -132,9 +132,11 @@ pub async fn create_station(
     }
     let mut conn = state.db.lock().await;
     match db::create_station(&mut conn, &user.id, req.name.trim(), req.lat, req.lon) {
-        Ok((station, key)) => {
-            (StatusCode::CREATED, Json(CreateStationResponse { station, key })).into_response()
-        }
+        Ok((station, key)) => (
+            StatusCode::CREATED,
+            Json(CreateStationResponse { station, key }),
+        )
+            .into_response(),
         Err(err) => internal_error(err),
     }
 }

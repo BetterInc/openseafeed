@@ -4,7 +4,11 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "openseafeed-worker", version, about = "OpenSeaFeed receiver worker")]
+#[command(
+    name = "openseafeed-worker",
+    version,
+    about = "OpenSeaFeed receiver worker"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -65,8 +69,13 @@ pub struct SinkArgs {
 /// A validated upstream AIS source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Upstream {
-    Tcp { host: String, port: u16 },
-    Ws { url: String },
+    Tcp {
+        host: String,
+        port: u16,
+    },
+    Ws {
+        url: String,
+    },
     /// Digitraffic marine AIS (MQTT over WebSocket).
     Finland,
     /// aisstream.io v0 WebSocket stream.

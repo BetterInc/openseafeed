@@ -58,7 +58,14 @@ fn type4_base_station() {
         panic!()
     };
     assert_eq!(
-        (p.utc_year, p.utc_month, p.utc_day, p.utc_hour, p.utc_minute, p.utc_second),
+        (
+            p.utc_year,
+            p.utc_month,
+            p.utc_day,
+            p.utc_hour,
+            p.utc_minute,
+            p.utc_second
+        ),
         (2020, 3, 6, 11, 60, 53)
     );
     close(p.longitude, -61.087023);
@@ -93,7 +100,10 @@ fn type5_static_voyage_multipart() {
         (90, 90, 10, 10)
     );
     assert_eq!(p.fix_type, 1);
-    assert_eq!((p.eta.month, p.eta.day, p.eta.hour, p.eta.minute), (1, 2, 8, 0));
+    assert_eq!(
+        (p.eta.month, p.eta.day, p.eta.hour, p.eta.minute),
+        (1, 2, 8, 0)
+    );
     close(p.maximum_static_draught, 6.0);
     assert_eq!(p.destination, "SEATTLE");
     assert!(!p.dte);
