@@ -51,6 +51,9 @@ pub async fn landing(State(state): State<AppState>) -> Html<String> {
 <body>
   <h1>OpenSeaFeed</h1>
   <p class="muted">An open community AIS network. Sign in to manage API keys and register stations.</p>
+  <p><a href="https://openseafeed.com/docs.html">API docs</a> &middot;
+     <a href="https://stream.openseafeed.com/">live map</a> &middot;
+     <a href="https://openseafeed.com/">about</a></p>
 
   <h2>Sign in</h2>
   {providers}
@@ -139,6 +142,9 @@ pub async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Res
   <p class="muted">Signed in as <strong>{who}</strong> — tier: <strong>{tier}</strong>
     &nbsp; <form class="inline" style="display:inline" method="post" action="/auth/logout">
     <button class="btn" type="submit">Log out</button></form></p>
+  <p><a href="https://openseafeed.com/docs.html">API docs</a> &middot;
+     <a href="https://stream.openseafeed.com/">live map</a> &middot;
+     <a href="https://openseafeed.com/">about</a></p>
 
   <h2>API keys</h2>
   <table><thead><tr><th>Key</th><th>Kind</th><th>Label</th><th></th></tr></thead>
