@@ -161,7 +161,19 @@ pub async fn list_stations(State(state): State<AppState>, headers: HeaderMap) ->
 /// sqlite. Public and CORS-open: the live map calls it cross-origin from the
 /// stream host. Coverage is honest-but-thin: famous ships, ferries, navy and
 /// big cargo have Commons photos; small craft essentially never do.
-pub async fn vessel_photo(State(state): State<AppState>, Path(mmsi): Path<u32>) -> Response {
+#[derive(Deserialize)]
+pub struct PhotoQuery {
+    /// IMO number when the caller knows it (from the stream's type 5
+    /// statics). Wikidata keys ships by IMO ~2.5x more often than by MMSI,
+    /// so this dramatically improves hit rate.
+    imo: Option<u32>,
+}
+
+pub async fn vessel_photo(
+    State(state): State<AppState>,
+    Path(mmsi): Path<u32>,
+    axum::extract::Query(q): axum::extract::Query<PhotoQuery>,
+) -> Response {
     const POSITIVE_TTL_DAYS: i64 = 30;
     const NEGATIVE_TTL_DAYS: i64 = 7;
 
@@ -178,33 +190,34 @@ pub async fn vessel_photo(State(state): State<AppState>, Path(mmsi): Path<u32>) 
                     chrono::Utc::now() - t.with_timezone(&chrono::Utc) < chrono::Duration::days(ttl)
                 })
                 .unwrap_or(false);
-            if fresh {
+            // A cached miss that ran without the IMO we now have is not an
+            // answer - retry with the stronger identity.
+            let identity_ok = p.image_url.is_some() || q.imo.is_none() || p.imo == q.imo;
+            if fresh && identity_ok {
                 return photo_response(p.image_url, p.page_url);
             }
         }
     }
 
-    let query =
-        format!(r#"SELECT ?img WHERE {{ ?item wdt:P587 "{mmsi}" . ?item wdt:P18 ?img }} LIMIT 1"#);
-    let resp = state
-        .http
-        .get("https://query.wikidata.org/sparql")
-        .query(&[("format", "json"), ("query", query.as_str())])
-        .timeout(std::time::Duration::from_secs(8))
-        .send()
-        .await
-        .and_then(|r| r.error_for_status());
-    let body: serde_json::Value = match resp {
-        Ok(r) => match r.json().await {
-            Ok(v) => v,
+    // IMO first (the stable hull identity, far better covered on Wikidata),
+    // MMSI as the fallback.
+    let mut found = None;
+    if let Some(imo) = q.imo {
+        match wikidata_image(&state, &format!(r#"wdt:P458 "{imo}""#)).await {
+            Ok(v) => found = v,
             Err(err) => return wikidata_unavailable(err),
-        },
-        Err(err) => return wikidata_unavailable(err),
-    };
+        }
+    }
+    if found.is_none() {
+        match wikidata_image(&state, &format!(r#"wdt:P587 "{mmsi}""#)).await {
+            Ok(v) => found = v,
+            Err(err) => return wikidata_unavailable(err),
+        }
+    }
 
     // P18 arrives as a Special:FilePath URL; ?width= makes Commons serve a
     // thumbnail, and swapping in File: yields the attribution page.
-    let (image_url, page_url) = match body["results"]["bindings"][0]["img"]["value"].as_str() {
+    let (image_url, page_url) = match found {
         Some(raw) => {
             let https = raw.replacen("http://", "https://", 1);
             (
@@ -217,11 +230,37 @@ pub async fn vessel_photo(State(state): State<AppState>, Path(mmsi): Path<u32>) 
 
     {
         let conn = state.db.lock().await;
-        if let Err(err) = db::photo_put(&conn, mmsi, image_url.as_deref(), page_url.as_deref()) {
+        if let Err(err) = db::photo_put(
+            &conn,
+            mmsi,
+            q.imo,
+            image_url.as_deref(),
+            page_url.as_deref(),
+        ) {
             tracing::warn!(%err, mmsi, "caching vessel photo failed");
         }
     }
     photo_response(image_url, page_url)
+}
+
+/// One Wikidata lookup: item matched by `predicate` (e.g. `wdt:P458 "123"`)
+/// with a Commons image. `Ok(None)` = looked, nothing there.
+async fn wikidata_image(state: &AppState, predicate: &str) -> Result<Option<String>, String> {
+    let query =
+        format!(r#"SELECT ?img WHERE {{ ?item {predicate} . ?item wdt:P18 ?img }} LIMIT 1"#);
+    let resp = state
+        .http
+        .get("https://query.wikidata.org/sparql")
+        .query(&[("format", "json"), ("query", query.as_str())])
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body["results"]["bindings"][0]["img"]["value"]
+        .as_str()
+        .map(str::to_string))
 }
 
 /// Wikidata being down must not cache a false "no photo": report and move on

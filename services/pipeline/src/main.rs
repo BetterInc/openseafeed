@@ -29,6 +29,10 @@ const NAMES_BUCKET: &str = "vessel-names";
 /// the map uses to color vessels by category.
 const TYPES_BUCKET: &str = "vessel-types";
 
+/// Same persistence for MMSI -> IMO number (type 5): the stable hull
+/// identity, which downstream photo lookups key on.
+const IMOS_BUCKET: &str = "vessel-imos";
+
 #[derive(Default)]
 struct Stats {
     received: u64,
@@ -43,6 +47,8 @@ struct Enrichment {
     names: HashMap<u32, String>,
     /// MMSI -> ITU ship-type code, from static messages.
     types: HashMap<u32, u8>,
+    /// MMSI -> IMO number, from type 5 statics.
+    imos: HashMap<u32, u32>,
     /// MMSI -> last known geohash cell + position, for routing messages that
     /// carry no position (static data) to the cell where subscribers of that
     /// area will see them.
@@ -57,6 +63,9 @@ impl Enrichment {
         }
         if self.types.len() > CACHE_CAP {
             self.types.clear();
+        }
+        if self.imos.len() > CACHE_CAP {
+            self.imos.clear();
         }
         if self.last_pos.len() > CACHE_CAP {
             self.last_pos.clear();
@@ -83,11 +92,13 @@ async fn main() -> anyhow::Result<()> {
     let js = async_nats::jetstream::new(client.clone());
     let names_kv = open_bucket(&js, NAMES_BUCKET, "MMSI -> last seen vessel name").await?;
     let types_kv = open_bucket(&js, TYPES_BUCKET, "MMSI -> ITU ship-type code").await?;
+    let imos_kv = open_bucket(&js, IMOS_BUCKET, "MMSI -> IMO number").await?;
 
     let mut window = dedupe::Window::new(Duration::from_secs(10));
     let mut enrich = Enrichment {
         names: HashMap::new(),
         types: HashMap::new(),
+        imos: HashMap::new(),
         last_pos: HashMap::new(),
     };
     warm_kv(&names_kv, |mmsi, v| {
@@ -100,9 +111,16 @@ async fn main() -> anyhow::Result<()> {
         }
     })
     .await;
+    warm_kv(&imos_kv, |mmsi, v| {
+        if let Ok(i) = v.parse() {
+            enrich.imos.insert(mmsi, i);
+        }
+    })
+    .await;
     tracing::info!(
         names = enrich.names.len(),
         types = enrich.types.len(),
+        imos = enrich.imos.len(),
         "enrichment caches warmed from KV"
     );
     let mut stats = Stats::default();
@@ -119,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
             &client,
             &names_kv,
             &types_kv,
+            &imos_kv,
             &msg.payload,
             &mut window,
             &mut enrich,
@@ -206,6 +225,7 @@ async fn handle(
     client: &async_nats::Client,
     names_kv: &async_nats::jetstream::kv::Store,
     types_kv: &async_nats::jetstream::kv::Store,
+    imos_kv: &async_nats::jetstream::kv::Store,
     payload: &[u8],
     window: &mut dedupe::Window,
     enrich: &mut Enrichment,
@@ -251,6 +271,17 @@ async fn handle(
             }
         }
     }
+    if let Some(imo) = msg.imo {
+        if enrich.imos.get(&msg.mmsi) != Some(&imo) {
+            enrich.imos.insert(msg.mmsi, imo);
+            if let Err(e) = imos_kv
+                .put(msg.mmsi.to_string(), imo.to_string().into_bytes().into())
+                .await
+            {
+                tracing::debug!(error = %e, mmsi = msg.mmsi, "imo persist failed");
+            }
+        }
+    }
     let cell_and_pos = match msg.position {
         Some((lat, lon)) => {
             let cell = openseafeed_geo::encode(lat, lon, GEOHASH_PRECISION);
@@ -279,6 +310,7 @@ async fn handle(
             mmsi_string: msg.mmsi,
             ship_name: enrich.names.get(&msg.mmsi).cloned().unwrap_or_default(),
             ship_type: enrich.types.get(&msg.mmsi).copied(),
+            imo: enrich.imos.get(&msg.mmsi).copied(),
             latitude: meta_lat,
             longitude: meta_lon,
             time_utc,

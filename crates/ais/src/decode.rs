@@ -40,6 +40,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
     let mut position = None;
     let mut name = None;
     let mut ship_type = None;
+    let mut imo = None;
 
     let packet = match id {
         1..=3 => {
@@ -111,6 +112,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
             };
             name = non_empty(&p.name);
             ship_type = Some(p.ship_type);
+            imo = (p.imo_number != 0).then_some(p.imo_number);
             Packet::ShipStaticData(p)
         }
         9 => {
@@ -266,6 +268,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
         position,
         name,
         ship_type,
+        imo,
     })
 }
 

@@ -308,6 +308,8 @@ pub struct Message {
     pub name: Option<String>,
     /// ITU ship-type code, when the message carries one (types 5, 19, 24B).
     pub ship_type: Option<u8>,
+    /// IMO number, when the message carries a nonzero one (type 5 only).
+    pub imo: Option<u32>,
 }
 
 impl Message {

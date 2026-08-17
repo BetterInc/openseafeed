@@ -42,6 +42,10 @@ pub struct MetaData {
     /// omitted from the JSON when unknown.
     #[serde(rename = "ShipType", default, skip_serializing_if = "Option::is_none")]
     pub ship_type: Option<u8>,
+    /// IMO number remembered from type 5 statics; the stable hull identity
+    /// (MMSIs change on reflagging). Same extension rules as ShipType.
+    #[serde(rename = "IMO", default, skip_serializing_if = "Option::is_none")]
+    pub imo: Option<u32>,
     pub latitude: f64,
     pub longitude: f64,
     /// RFC 3339 UTC timestamp string.
@@ -161,6 +165,7 @@ mod tests {
                 mmsi_string: m.mmsi,
                 ship_name: String::new(),
                 ship_type: None,
+                imo: None,
                 latitude: lat,
                 longitude: lon,
                 time_utc: "2026-07-24T00:00:00Z".into(),
