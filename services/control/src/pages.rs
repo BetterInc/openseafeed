@@ -8,62 +8,105 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 
+// Same dark theme as openseafeed.com and the live map.
 const STYLE: &str = r#"
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; max-width: 52rem; margin: 3rem auto;
-         padding: 0 1rem; line-height: 1.5; }
-  h1 { font-size: 1.6rem; } h2 { margin-top: 2rem; font-size: 1.2rem; }
-  .muted { opacity: 0.7; } code { font-family: ui-monospace, monospace; }
-  .btn { display: inline-block; padding: 0.5rem 0.9rem; margin: 0.25rem 0.25rem 0.25rem 0;
-         border: 1px solid currentColor; border-radius: 0.4rem; text-decoration: none;
-         background: transparent; color: inherit; cursor: pointer; font-size: 1rem; }
-  input { padding: 0.5rem; font-size: 1rem; border-radius: 0.4rem;
-          border: 1px solid #8888; }
-  table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
-  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #8884;
-           font-size: 0.9rem; }
-  form.inline { margin: 0.5rem 0; }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { background: #0b1420; color: #cfe3f5; font: 16px/1.6 system-ui, sans-serif; margin: 0; }
+  header.site { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
+                border-bottom: 1px solid #1d3242; }
+  header.site h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em;
+                   color: #7fd4a8; margin: 0; }
+  header.site nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  header.site nav a { text-decoration: none; color: #9fb8cd; }
+  header.site nav a:hover { color: #7fd4a8; }
+  main { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  h2 { color: #fff; font-size: 1.5rem; margin: 0 0 .5rem; }
+  h3 { color: #7fd4a8; font-size: 1.05rem; letter-spacing: .03em; margin: 2.2rem 0 .6rem; }
+  p { margin: .5rem 0; }
+  .muted { color: #9fb8cd; }
+  a { color: #7fd4a8; }
+  code { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 4px;
+         padding: .1rem .4rem; color: #d6ffe4; font-size: .88em;
+         font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+  .card { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 8px;
+          padding: .9rem 1.1rem; margin: .75rem 0; }
+  .card b { color: #fff; }
+  .btn { display: inline-block; padding: .5rem 1.1rem; border-radius: 6px;
+         border: 1px solid #1f7a44; background: #14532d; color: #d6ffe4;
+         font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn:hover { background: #1a6b3a; }
+  .btn.ghost { background: transparent; border-color: #24455f; color: #cfe3f5;
+               font-weight: 400; }
+  .btn.ghost:hover { border-color: #7fd4a8; }
+  input, select { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f;
+                  border-radius: 6px; padding: .5rem .6rem; font: inherit; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid #16283a;
+           font-size: .9rem; }
+  th { color: #7f9ab0; font-weight: 600; }
+  form.inline { margin: .75rem 0; display: flex; gap: .5rem; flex-wrap: wrap;
+                align-items: center; }
 </style>
 "#;
+
+/// Shared top bar linking the rest of the product.
+const NAV: &str = r#"<header class="site"><h1>OPENSEAFEED</h1><nav>
+  <a href="https://stream.openseafeed.com/">Live map</a>
+  <a href="https://openseafeed.com/docs.html">API docs</a>
+  <a href="https://openseafeed.com/">About</a>
+</nav></header>"#;
 
 /// `GET /` - landing page. Shows only the sign-in methods this server has
 /// configured, plus the always-available magic-link form.
 pub async fn landing(State(state): State<AppState>) -> Html<String> {
     let mut providers = String::new();
     if state.cfg.github.is_some() {
-        providers.push_str(r#"<a class="btn" href="/auth/github">Sign in with GitHub</a>"#);
+        providers.push_str(r#"<a class="btn" href="/auth/github">Sign in with GitHub</a> "#);
     }
     if state.cfg.google.is_some() {
-        providers.push_str(r#"<a class="btn" href="/auth/google">Sign in with Google</a>"#);
+        providers.push_str(r#"<a class="btn" href="/auth/google">Sign in with Google</a> "#);
     }
-    if providers.is_empty() {
-        providers.push_str(
-            r#"<p class="muted">No OAuth providers are configured. Use the email link below.</p>"#,
-        );
-    }
+    let email_intro = if providers.is_empty() {
+        "Enter your email and we send a one-time sign-in link. No password, no separate \
+         registration step - your first sign-in creates the account."
+    } else {
+        "Or use your email: we send a one-time sign-in link. Your first sign-in creates \
+         the account."
+    };
 
     let body = format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenSeaFeed</title>{STYLE}</head>
+<title>OpenSeaFeed - sign in</title>{STYLE}</head>
 <body>
-  <h1>OpenSeaFeed</h1>
-  <p class="muted">An open community AIS network. Sign in to manage API keys and register stations.</p>
-  <p><a href="https://openseafeed.com/docs.html">API docs</a> -
-     <a href="https://stream.openseafeed.com/">live map</a> -
-     <a href="https://openseafeed.com/">about</a></p>
-
+{NAV}
+<main>
   <h2>Sign in</h2>
-  {providers}
+  <p class="muted">OpenSeaFeed is a free, community-owned AIS network. The
+     <a href="https://stream.openseafeed.com/">live map</a> and most of the
+     <a href="https://openseafeed.com/docs.html">API</a> work without any account.
+     Sign in when you want a key of your own:</p>
 
-  <h2>Email sign-in link</h2>
+  <div class="card"><b>Use the data</b> -
+    <span class="muted">a <code>live</code> key lifts the anonymous limits: bigger map areas
+    on the stream and deeper history queries.</span></div>
+  <div class="card"><b>Contribute data</b> -
+    <span class="muted">a <code>feed</code> key (or a registered receiver station) lets you push
+    AIS into the network. Active contributors get the highest tier: unlimited streaming and
+    the freshest data.</span></div>
+
+  <h3>Sign in</h3>
+  <p>{providers}</p>
+  <p class="muted">{email_intro}</p>
   <form class="inline" id="magic">
     <input type="email" name="email" placeholder="you@example.com" required>
-    <button class="btn" type="submit">Email me a link</button>
+    <button class="btn" type="submit">Email me a sign-in link</button>
   </form>
   <p class="muted" id="magic-msg"></p>
+</main>
 
 <script>
 document.getElementById('magic').addEventListener('submit', async (e) => {{
@@ -136,34 +179,44 @@ pub async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Res
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenSeaFeed - Dashboard</title>{STYLE}</head>
+<title>OpenSeaFeed - dashboard</title>{STYLE}</head>
 <body>
-  <h1>Dashboard</h1>
+{NAV}
+<main>
+  <h2>Dashboard</h2>
   <p class="muted">Signed in as <strong>{who}</strong> - tier: <strong>{tier}</strong>
+    <span class="muted">(contributor = you actively feed the network; it unlocks unlimited
+    streaming and the freshest data)</span>
     &nbsp; <form class="inline" style="display:inline" method="post" action="/auth/logout">
-    <button class="btn" type="submit">Log out</button></form></p>
-  <p><a href="https://openseafeed.com/docs.html">API docs</a> -
-     <a href="https://stream.openseafeed.com/">live map</a> -
-     <a href="https://openseafeed.com/">about</a></p>
+    <button class="btn ghost" type="submit">Log out</button></form></p>
 
-  <h2>API keys</h2>
+  <h3>API keys</h3>
+  <p class="muted"><code>live</code> keys read the API (stream, snapshot, history);
+    <code>feed</code> keys authenticate data you push to
+    <code>ingest.openseafeed.com</code>. Treat them like passwords - anyone holding a key
+    can use it. See the <a href="https://openseafeed.com/docs.html">API docs</a> for how
+    to use each kind.</p>
   <table><thead><tr><th>Key</th><th>Kind</th><th>Label</th><th></th></tr></thead>
     <tbody>{key_rows}</tbody></table>
   <form class="inline" id="newkey">
-    <select name="kind"><option value="live">live</option><option value="feed">feed</option></select>
-    <input type="text" name="label" placeholder="label (optional)">
+    <select name="kind"><option value="live">live (use the data)</option><option value="feed">feed (contribute data)</option></select>
+    <input type="text" name="label" placeholder="label, e.g. my-app (optional)">
     <button class="btn" type="submit">Create key</button>
   </form>
 
-  <h2>Stations</h2>
+  <h3>Receiver stations</h3>
+  <p class="muted">A station is your own AIS receiver (RTL-SDR, AIS-catcher, dAISy, ...).
+    Registering one gives it its own key to feed with; a station seen in the last 7 days
+    makes you a contributor. Position is optional and only used for coverage maps.</p>
   <table><thead><tr><th>Name</th><th>Station key</th><th>Msgs</th><th>Last seen</th></tr></thead>
     <tbody>{station_rows}</tbody></table>
   <form class="inline" id="newstation">
-    <input type="text" name="name" placeholder="station name" required>
-    <input type="number" step="any" name="lat" placeholder="lat">
-    <input type="number" step="any" name="lon" placeholder="lon">
+    <input type="text" name="name" placeholder="station name, e.g. rooftop-enschede" required>
+    <input type="number" step="any" name="lat" placeholder="lat (optional)">
+    <input type="number" step="any" name="lon" placeholder="lon (optional)">
     <button class="btn" type="submit">Register station</button>
   </form>
+</main>
 
 <script>
 async function post(url, body) {{
