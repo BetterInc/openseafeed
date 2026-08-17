@@ -42,7 +42,7 @@ struct App {
 
 #[derive(Deserialize, Debug)]
 struct Subscription {
-    #[serde(rename = "APIKey")]
+    #[serde(rename = "APIKey", default)]
     api_key: String,
     #[serde(rename = "BoundingBoxes")]
     bounding_boxes: Vec<Vec<[f64; 2]>>,
@@ -199,13 +199,19 @@ async fn apply_subscription(
 ) -> Result<(ClientFilter, SelectAll<async_nats::Subscriber>), String> {
     let sub: Subscription =
         serde_json::from_str(text).map_err(|e| format!("invalid subscription JSON: {e}"))?;
-    let info = app
-        .validator
-        .validate(&sub.api_key)
-        .await
-        .ok_or("invalid API key")?;
+    // No key = anonymous viewer (the public live map): welcome, but capped to
+    // the free-tier area. A key that IS presented must still be valid.
+    let tier = if sub.api_key.is_empty() {
+        "free".to_string()
+    } else {
+        app.validator
+            .validate(&sub.api_key)
+            .await
+            .ok_or("invalid API key")?
+            .tier
+    };
     let filter = ClientFilter::from_subscription(&sub).map_err(str::to_string)?;
-    if info.tier != "contributor" && filter.total_area() > FREE_TIER_MAX_AREA {
+    if tier != "contributor" && filter.total_area() > FREE_TIER_MAX_AREA {
         return Err(format!(
             "free tier is limited to {FREE_TIER_MAX_AREA} deg² of bounding-box area; \
              contribute a receiver or feed to unlock unlimited streaming"

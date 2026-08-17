@@ -43,7 +43,6 @@
   <div class="stat"><span id="status">disconnected</span></div>
   <div id="controls">
     <label><input type="checkbox" id="seamarks"> seamarks</label>
-    <input type="text" id="key" value="osf_live_devdevdev" placeholder="osf_live_…" title="API key (create one via the control plane)">
     <button id="go">connect</button>
   </div>
 </header>
@@ -182,18 +181,11 @@ for (const layer of ["vessels", "vessels-moving"]) {
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
 
-const GLOBAL_BBOX = [[[-90, -180], [90, 180]]];
-// Fits well under the free tier's bounding-box area cap and covers the
-// waters the Nordic feeds actually report on.
-const FREE_TIER_BBOX = [[[54, -5], [72, 32]]];
-let bbox = GLOBAL_BBOX;
-
-// The baked-in key only validates in dev mode; don't present it to a real
-// control plane.
-if (location.protocol === "https:") {
-  const k = document.getElementById("key");
-  if (k.value === "osf_live_devdevdev") k.value = "";
-}
+// The map is a public window onto the network - viewers need no API key
+// (fanout's anonymous tier). Keys are for API consumers and are created on
+// the control plane. Anonymous viewing is capped to the free-tier area;
+// this box fits it and covers the waters the feeds actually report on.
+const VIEW_BBOX = [[[54, -5], [72, 32]]];
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
@@ -203,23 +195,11 @@ function connect() {
   status.textContent = "connecting…";
   ws.onopen = () => {
     status.textContent = "streaming";
-    ws.send(JSON.stringify({
-      APIKey: document.getElementById("key").value.trim(),
-      BoundingBoxes: bbox,
-    }));
+    ws.send(JSON.stringify({ BoundingBoxes: VIEW_BBOX }));
   };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.error) {
-      // A free-tier key can't stream the whole globe: fall back to the
-      // Nordic box instead of dying on the error.
-      if (m.error.startsWith("free tier") && bbox === GLOBAL_BBOX) {
-        bbox = FREE_TIER_BBOX;
-        connect();
-        return;
-      }
-      status.textContent = "error: " + m.error; return;
-    }
+    if (m.error) { status.textContent = "error: " + m.error; return; }
     total++; windowCount++;
     const md = m.MetaData || {};
     if (typeof md.latitude !== "number" || (!md.latitude && !md.longitude)) return;
