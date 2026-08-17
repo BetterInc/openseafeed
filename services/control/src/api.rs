@@ -156,7 +156,7 @@ pub async fn list_stations(State(state): State<AppState>, headers: HeaderMap) ->
 
 // --- vessel photos ----------------------------------------------------------
 
-/// `GET /v1/vessels/{mmsi}/photo` — free-licensed photo for a vessel, looked
+/// `GET /v1/photos/{mmsi}` — free-licensed photo for a vessel, looked
 /// up on Wikidata (MMSI property P587 -> Commons image P18) and cached in
 /// sqlite. Public and CORS-open: the live map calls it cross-origin from the
 /// stream host. Coverage is honest-but-thin: famous ships, ferries, navy and

@@ -212,7 +212,7 @@ for (const layer of ["vessels", "vessels-moving"]) {
       .addTo(map);
     // Free-licensed photo, when Commons has one for this MMSI. Built via DOM
     // APIs so nothing from the network is ever injected as HTML.
-    fetch(`${API_BASE}/v1/vessels/${p.mmsi}/photo`)
+    fetch(`${API_BASE}/v1/photos/${p.mmsi}`)
       .then((r) => r.json())
       .then((ph) => {
         const box = document.getElementById(photoId);

@@ -191,8 +191,9 @@ pub fn router(state: AppState) -> Router {
             "/v1/stations",
             post(api::create_station).get(api::list_stations),
         )
-        // Public, CORS-open vessel enrichment used by the live map.
-        .route("/v1/vessels/{mmsi}/photo", get(api::vessel_photo))
+        // Public, CORS-open vessel enrichment used by the live map. NOT under
+        // /v1/vessels: the api ingress routes that prefix to the snapshotter.
+        .route("/v1/photos/{mmsi}", get(api::vessel_photo))
         // Internal (shared-secret) API
         .route("/v1/internal/keys/validate", get(internal::validate_key))
         .route("/v1/internal/stations/heartbeat", post(internal::heartbeat))
