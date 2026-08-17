@@ -312,8 +312,7 @@ function renderDetail() {
   const info = v.info || {};
   row("IMO", v.imo || info.imoNumber);
   row("call sign", info.callsign);
-  const dim = info.dim;
-  if (dim && dim.A + dim.B > 0) row("size", `${dim.A + dim.B} m × ${dim.C + dim.D} m`);
+  if (info.length) row("size", `${info.length} m × ${info.beam || "?"} m`);
   row("draught", info.draught ? `${info.draught} m` : null);
   row("destination", info.destination);
   row("ETA", fmtEta(info.eta));
@@ -335,6 +334,40 @@ function renderDetail() {
   }
 }
 
+// Seed the panel (and the map) from the snapshotter's current state, so a
+// shared #vessel link shows the ship immediately instead of waiting for its
+// next broadcast. Live stream messages then take over.
+function seedVessel(mmsi) {
+  fetch(`${API_BASE}/v1/vessels/${mmsi}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((sv) => {
+      if (!sv || detailMmsi !== mmsi) return;
+      const prev = seen.get(mmsi) || {};
+      const v = Object.assign({}, prev);
+      // Position/motion: only if the snapshot is newer than what we heard.
+      if ((prev.t == null || (sv.ts && sv.ts > prev.t)) && typeof sv.lat === "number") {
+        v.lat = sv.lat; v.lon = sv.lon;
+        if (sv.sog != null) v.sog = sv.sog;
+        if (sv.cog != null) v.cog = sv.cog;
+        if (sv.hdg != null) v.heading = sv.hdg;
+        if (sv.nav != null) v.navStatus = sv.nav;
+        v.t = sv.ts || Date.now();
+        v.type = "snapshot";
+      }
+      if (sv.name && !v.name) v.name = sv.name;
+      if (sv.type != null && v.stype == null) v.stype = sv.type;
+      if (sv.imo != null && v.imo == null) v.imo = sv.imo;
+      v.info = Object.assign({ callsign: sv.callsign, destination: sv.dest,
+                               draught: sv.draught, length: sv.len, beam: sv.beam,
+                               eta: sv.eta }, v.info);
+      if (typeof v.lat !== "number") return; // nothing usable yet
+      seen.set(mmsi, v);
+      renderDetail();
+      map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
+    })
+    .catch(() => {});
+}
+
 function route() {
   const mHash = location.hash.match(/^#vessel\/(\d+)$/);
   if (mHash) {
@@ -344,6 +377,7 @@ function route() {
     document.getElementById("d-photo").replaceChildren();
     dEl.classList.add("open");
     renderDetail();
+    seedVessel(detailMmsi);
     const v = seen.get(detailMmsi);
     if (v) map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
   } else {
@@ -399,9 +433,13 @@ function connect() {
     // Static messages carry the vessel's particulars: remember them so the
     // detail panel can show everything the ship has told us.
     if (/Static|ExtendedClassB/.test(m.MessageType)) {
+      const D = pkt.Dimension || {};
+      const len = (D.A || 0) + (D.B || 0);
       const fresh = { callsign: pkt.CallSign, destination: pkt.Destination,
-                      draught: pkt.MaximumStaticDraught, dim: pkt.Dimension,
-                      eta: pkt.Eta, imoNumber: pkt.ImoNumber };
+                      draught: pkt.MaximumStaticDraught, eta: pkt.Eta,
+                      imoNumber: pkt.ImoNumber,
+                      length: len || undefined,
+                      beam: len ? (D.C || 0) + (D.D || 0) : undefined };
       v.info = Object.assign({}, prev.info);
       for (const [k, val] of Object.entries(fresh)) {
         if (val !== undefined && val !== null && val !== "" && val !== 0) v.info[k] = val;

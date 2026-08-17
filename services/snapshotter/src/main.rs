@@ -47,6 +47,22 @@ struct Vessel {
     name: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     ship_type: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    imo: Option<u32>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    callsign: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    dest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draught: Option<f64>,
+    /// Length / beam in metres, from the Dimension block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    len: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    beam: Option<u16>,
+    /// Raw AIS ETA block, `{Month, Day, Hour, Minute}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eta: Option<serde_json::Value>,
     /// Unix ms of last update.
     ts: u64,
 }
@@ -134,6 +150,12 @@ async fn consume(nats: async_nats::Client, app: Arc<App>) {
         if !sm.metadata.ship_name.is_empty() {
             v.name = sm.metadata.ship_name.clone();
         }
+        if sm.metadata.ship_type.is_some() {
+            v.ship_type = sm.metadata.ship_type;
+        }
+        if sm.metadata.imo.is_some() {
+            v.imo = sm.metadata.imo;
+        }
         // The packet payload is externally tagged: {"PositionReport": {...}}.
         if let Some(p) = sm.message.get(&sm.message_type) {
             update_from_packet(v, &sm.message_type, p);
@@ -187,6 +209,34 @@ fn update_from_packet(v: &mut Vessel, message_type: &str, p: &serde_json::Value)
             if let Some(t) = u("Type").or_else(|| u("ShipType")) {
                 if t > 0 {
                     v.ship_type = Some(t as u8);
+                }
+            }
+            if let Some(cs) = p.get("CallSign").and_then(|x| x.as_str()) {
+                if !cs.is_empty() {
+                    v.callsign = cs.to_string();
+                }
+            }
+            if let Some(d) = p.get("Destination").and_then(|x| x.as_str()) {
+                if !d.is_empty() {
+                    v.dest = d.to_string();
+                }
+            }
+            if let Some(dr) = f("MaximumStaticDraught") {
+                if dr > 0.0 {
+                    v.draught = Some(dr);
+                }
+            }
+            if let Some(dim) = p.get("Dimension") {
+                let side = |k: &str| dim.get(k).and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+                let (len, beam) = (side("A") + side("B"), side("C") + side("D"));
+                if len > 0 {
+                    v.len = Some(len);
+                    v.beam = Some(beam);
+                }
+            }
+            if let Some(eta) = p.get("Eta") {
+                if eta.get("Month").and_then(|x| x.as_u64()).unwrap_or(0) > 0 {
+                    v.eta = Some(eta.clone());
                 }
             }
         }
@@ -255,9 +305,11 @@ async fn authed_tier(
     app: &App,
     key: &Option<String>,
 ) -> Result<String, (StatusCode, &'static str)> {
-    let key = key
-        .as_deref()
-        .ok_or((StatusCode::UNAUTHORIZED, "missing ?key="))?;
+    // No key = anonymous (the public live map): free tier. A key that IS
+    // presented must still be valid.
+    let Some(key) = key.as_deref() else {
+        return Ok("free".to_string());
+    };
     let info = app
         .validator
         .validate(key)
@@ -313,7 +365,18 @@ async fn get_vessel(
     }
     let st = app.state.read().await;
     match st.vessels.get(&mmsi) {
-        Some(v) => axum::Json(v.clone()).into_response(),
-        None => (StatusCode::NOT_FOUND, "unknown mmsi").into_response(),
+        // CORS-open: the live map's detail panel calls this cross-origin
+        // from the stream host.
+        Some(v) => (
+            [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+            axum::Json(v.clone()),
+        )
+            .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+            "unknown mmsi",
+        )
+            .into_response(),
     }
 }
