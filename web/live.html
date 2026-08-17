@@ -27,6 +27,20 @@
       font: 13px/1.5 system-ui, sans-serif; padding: .6rem .8rem; }
   .maplibregl-popup-tip { border-top-color: #24455f; }
   .maplibregl-popup-content b { color: #7fd4a8; }
+  #detail { position: absolute; top: 0; right: 0; bottom: 0; width: min(380px, 100%);
+            background: rgba(11,20,32,.97); border-left: 1px solid #1d3242; z-index: 10;
+            overflow-y: auto; padding: 1rem; display: none; }
+  #detail.open { display: block; }
+  #detail h2 { color: #7fd4a8; font-size: 1.15rem; margin-bottom: .15rem; }
+  #detail .sub { color: #7f9ab0; font-size: 12px; margin-bottom: .6rem; }
+  #detail img { max-width: 100%; border-radius: 6px; margin: .5rem 0 .15rem; display: block; }
+  #detail table { width: 100%; border-collapse: collapse; margin-top: .6rem; font-size: 13px; }
+  #detail td { padding: .3rem 0; border-bottom: 1px solid #16283a; vertical-align: top; }
+  #detail td:first-child { color: #7f9ab0; width: 42%; }
+  #detail .back { display: inline-block; margin-bottom: .7rem; color: #7fd4a8; cursor: pointer;
+                  background: none; border: none; padding: 0; font: inherit; }
+  #detail .back:hover { text-decoration: underline; }
+  #detail .credit { font-size: 11px; color: #7f9ab0; }
   #legend { position: absolute; bottom: 2.2rem; left: .75rem; z-index: 5;
             background: rgba(11,20,32,.85); border: 1px solid #1d3242; border-radius: 6px;
             padding: .5rem .75rem; color: #7f9ab0; font-size: 12px; }
@@ -58,6 +72,13 @@
   <i style="background:#5fd8d2"></i>high-speed&ensp;
   <i style="background:#8fa3b0"></i>other
 </div>
+<aside id="detail">
+  <button class="back" id="d-back">&larr; back to map</button>
+  <h2 id="d-name"></h2>
+  <div class="sub" id="d-sub"></div>
+  <div id="d-photo"></div>
+  <table id="d-table"></table>
+</aside>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 "use strict";
@@ -81,11 +102,16 @@ const map = new maplibregl.Map({
         tileSize: 256,
       },
       vessels: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      trail: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
     },
     layers: [
       { id: "base", type: "raster", source: "base" },
       { id: "seamark", type: "raster", source: "seamark",
         layout: { visibility: "none" } },
+      // Track of the vessel currently open in the detail panel, drawn from
+      // the positions received while the panel is open.
+      { id: "trail", type: "line", source: "trail",
+        paint: { "line-color": "#7fd4a8", "line-width": 1.5, "line-opacity": 0.7 } },
       // Stationary vessels: dots. Color = ship-type category (see
       // CAT_COLORS below, kept in sync by buildColorExpr); opacity = age.
       { id: "vessels", type: "circle", source: "vessels",
@@ -167,6 +193,31 @@ const API_BASE = location.host.startsWith("stream.")
   ? location.origin.replace("//stream.", "//api.")
   : "http://localhost:8083";
 
+const NAV_STATUS = ["under way (engine)", "at anchor", "not under command",
+  "restricted manoeuvrability", "constrained by draught", "moored", "aground",
+  "fishing", "under way (sailing)", "reserved", "reserved", "towing astern",
+  "towing alongside", "reserved", "AIS-SART", "undefined"];
+
+// Fetch the free-licensed photo (Wikidata/Commons via the control plane)
+// into `box`, DOM-built so nothing from the network is injected as HTML.
+function loadPhoto(box, mmsi, imo) {
+  fetch(`${API_BASE}/v1/photos/${mmsi}${imo ? `?imo=${imo}` : ""}`)
+    .then((r) => r.json())
+    .then((ph) => {
+      if (!box.isConnected || !ph.found) return;
+      const img = document.createElement("img");
+      img.src = ph.image_url;
+      const credit = document.createElement("a");
+      credit.href = ph.page_url;
+      credit.target = "_blank";
+      credit.rel = "noopener";
+      credit.textContent = "photo · Wikimedia Commons";
+      credit.className = "credit";
+      box.replaceChildren(img, credit);
+    })
+    .catch(() => {});
+}
+
 function refresh() {
   const now = Date.now();
   const features = [];
@@ -189,6 +240,7 @@ function refresh() {
   windowCount = 0;
   document.getElementById("total").textContent = total.toLocaleString();
   document.getElementById("vessels").textContent = seen.size.toLocaleString();
+  if (detailMmsi != null) renderDetail(); // keep ages/position live
 }
 setInterval(refresh, 1000);
 
@@ -206,33 +258,97 @@ for (const layer of ["vessels", "vessels-moving"]) {
         (p.moving == 1
           ? `${esc(p.sog)} kn, course ${Math.round(p.rot)}&deg;<br>`
           : `stationary<br>`) +
-        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago` +
+        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago<br>` +
+        `<a href="#vessel/${esc(p.mmsi)}">details &rarr;</a>` +
         `<div id="${photoId}"></div>`
       )
       .addTo(map);
-    // Free-licensed photo, when Commons has one for this MMSI. Built via DOM
-    // APIs so nothing from the network is ever injected as HTML.
-    fetch(`${API_BASE}/v1/photos/${p.mmsi}${p.imo ? `?imo=${p.imo}` : ""}`)
-      .then((r) => r.json())
-      .then((ph) => {
-        const box = document.getElementById(photoId);
-        if (!box || !ph.found) return;
-        const img = document.createElement("img");
-        img.src = ph.image_url;
-        img.style.cssText = "max-width:240px;border-radius:4px;margin-top:.4rem;display:block";
-        const credit = document.createElement("a");
-        credit.href = ph.page_url;
-        credit.target = "_blank";
-        credit.rel = "noopener";
-        credit.textContent = "photo · Wikimedia Commons";
-        credit.style.cssText = "font-size:11px;color:#7f9ab0";
-        box.append(img, credit);
-      })
-      .catch(() => {});
+    const box = document.getElementById(photoId);
+    if (box) loadPhoto(box, p.mmsi, p.imo);
   });
   map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
+
+// ── Vessel detail panel (#vessel/<mmsi> hash route) ───────────────────────
+let detailMmsi = null;
+let trail = [];
+let photoKey = ""; // `${mmsi}:${imo}` of the last photo request
+
+const dEl = document.getElementById("detail");
+document.getElementById("d-back").onclick = () => { location.hash = ""; };
+
+function fmtEta(e) {
+  if (!e || !e.Month) return null;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(e.Month)}-${p(e.Day)} ${p(e.Hour)}:${p(e.Minute)} UTC`;
+}
+
+function renderDetail() {
+  const mmsi = detailMmsi;
+  if (mmsi == null) return;
+  const v = seen.get(mmsi);
+  document.getElementById("d-name").textContent = (v && v.name) || "unnamed";
+  const kind = v ? CAT_NAMES[typeCat(v.stype)] + (v.stype != null ? ` (type ${v.stype})` : "") : "";
+  document.getElementById("d-sub").textContent = v ? `MMSI ${mmsi} · ${kind}` : `MMSI ${mmsi}`;
+
+  const table = document.getElementById("d-table");
+  table.replaceChildren();
+  const row = (label, value) => {
+    if (value == null || value === "") return;
+    const tr = table.insertRow();
+    tr.insertCell().textContent = label;
+    tr.insertCell().textContent = String(value);
+  };
+  if (!v) {
+    row("status", "waiting for this vessel's next broadcast…");
+    return;
+  }
+  const info = v.info || {};
+  row("IMO", v.imo || info.imoNumber);
+  row("call sign", info.callsign);
+  const dim = info.dim;
+  if (dim && dim.A + dim.B > 0) row("size", `${dim.A + dim.B} m × ${dim.C + dim.D} m`);
+  row("draught", info.draught ? `${info.draught} m` : null);
+  row("destination", info.destination);
+  row("ETA", fmtEta(info.eta));
+  row("nav status", v.navStatus != null ? NAV_STATUS[v.navStatus] : null);
+  row("speed", v.sog != null ? `${v.sog} kn` : null);
+  row("course", v.cog != null ? `${Math.round(v.cog)}°` : null);
+  row("heading", v.heading != null ? `${v.heading}°` : null);
+  row("position", `${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}`);
+  row("last message", `${v.type} · ${Math.round((Date.now() - v.t) / 1000)}s ago`);
+
+  // (Re)load the photo when the identity we can search with changes - e.g.
+  // the IMO arriving with the ship's next statics unlocks a better lookup.
+  const key = `${mmsi}:${v.imo || ""}`;
+  if (key !== photoKey) {
+    photoKey = key;
+    const box = document.getElementById("d-photo");
+    box.replaceChildren();
+    loadPhoto(box, mmsi, v.imo);
+  }
+}
+
+function route() {
+  const mHash = location.hash.match(/^#vessel\/(\d+)$/);
+  if (mHash) {
+    detailMmsi = Number(mHash[1]);
+    trail = [];
+    photoKey = "";
+    document.getElementById("d-photo").replaceChildren();
+    dEl.classList.add("open");
+    renderDetail();
+    const v = seen.get(detailMmsi);
+    if (v) map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
+  } else {
+    detailMmsi = null;
+    dEl.classList.remove("open");
+    const src = map.getSource("trail");
+    if (src) src.setData({ type: "FeatureCollection", features: [] });
+  }
+}
+window.addEventListener("hashchange", route);
 
 // The map is a public window onto the network - viewers need no API key
 // (fanout's anonymous tier). Keys are for API consumers and are created on
@@ -262,7 +378,7 @@ function connect() {
     const pkt = m.Message ? m.Message[m.MessageType] || {} : {};
     const heading = typeof pkt.TrueHeading === "number" && pkt.TrueHeading < 511
       ? pkt.TrueHeading : undefined;
-    seen.set(md.MMSI, {
+    const v = {
       lon: md.longitude, lat: md.latitude, t: Date.now(),
       name: md.ShipName || prev.name,
       sog: typeof pkt.Sog === "number" && pkt.Sog < 102.3 ? pkt.Sog : prev.sog,
@@ -271,12 +387,38 @@ function connect() {
       type: m.MessageType,
       stype: typeof md.ShipType === "number" ? md.ShipType : prev.stype,
       imo: typeof md.IMO === "number" ? md.IMO : prev.imo,
-    });
+      navStatus: typeof pkt.NavigationalStatus === "number"
+        ? pkt.NavigationalStatus : prev.navStatus,
+      info: prev.info,
+    };
+    // Static messages carry the vessel's particulars: remember them so the
+    // detail panel can show everything the ship has told us.
+    if (/Static|ExtendedClassB/.test(m.MessageType)) {
+      const fresh = { callsign: pkt.CallSign, destination: pkt.Destination,
+                      draught: pkt.MaximumStaticDraught, dim: pkt.Dimension,
+                      eta: pkt.Eta, imoNumber: pkt.ImoNumber };
+      v.info = Object.assign({}, prev.info);
+      for (const [k, val] of Object.entries(fresh)) {
+        if (val !== undefined && val !== null && val !== "" && val !== 0) v.info[k] = val;
+      }
+    }
+    seen.set(md.MMSI, v);
+    if (detailMmsi === md.MMSI) {
+      if (typeof md.latitude === "number" && (md.latitude || md.longitude)) {
+        trail.push([md.longitude, md.latitude]);
+        if (trail.length > 1) {
+          map.getSource("trail").setData({ type: "Feature", properties: {},
+            geometry: { type: "LineString", coordinates: trail } });
+        }
+      }
+      renderDetail();
+    }
   };
   ws.onclose = () => { status.textContent = "disconnected — retrying in 3s"; setTimeout(connect, 3000); };
 }
 document.getElementById("go").onclick = connect;
 connect();
+route(); // honor a #vessel/<mmsi> deep link on load
 </script>
 </body>
 </html>
