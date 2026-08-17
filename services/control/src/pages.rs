@@ -14,13 +14,13 @@ const STYLE: &str = r#"
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { background: #0b1420; color: #cfe3f5; font: 16px/1.6 system-ui, sans-serif; margin: 0; }
-  header.site { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
-                border-bottom: 1px solid #1d3242; }
-  header.site h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em;
-                   color: #7fd4a8; margin: 0; }
-  header.site nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
-  header.site nav a { text-decoration: none; color: #9fb8cd; }
-  header.site nav a:hover { color: #7fd4a8; }
+  .osf-nav { display: flex; gap: 1.5rem; align-items: baseline; padding: .8rem 1.5rem;
+             border-bottom: 1px solid #1d3242; background: #0b1420; }
+  .osf-nav .brand { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em;
+                    color: #7fd4a8; text-decoration: none; }
+  .osf-nav nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  .osf-nav nav a { text-decoration: none; color: #9fb8cd; }
+  .osf-nav nav a:hover { color: #7fd4a8; }
   main { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
   h2 { color: #fff; font-size: 1.5rem; margin: 0 0 .5rem; }
   h3 { color: #7fd4a8; font-size: 1.05rem; letter-spacing: .03em; margin: 2.2rem 0 .6rem; }
@@ -51,13 +51,17 @@ const STYLE: &str = r#"
 </style>
 "#;
 
-/// Shared top bar linking the rest of the product.
-const NAV: &str = r#"<header class="site"><h1>OPENSEAFEED</h1><nav>
-  <a href="https://stream.openseafeed.com/">Live map</a>
-  <a href="https://openseafeed.com/docs.html">API docs</a>
-  <a href="https://openseafeed.com/account.html">Account</a>
-  <a href="https://openseafeed.com/">About</a>
-</nav></header>"#;
+/// Shared top bar - identical structure and styling to every other
+/// openseafeed.com page, so the product reads as one site.
+const NAV: &str = r#"<header class="osf-nav">
+  <a class="brand" href="https://openseafeed.com/">OPENSEAFEED</a>
+  <nav>
+    <a href="https://openseafeed.com/">Home</a>
+    <a href="https://stream.openseafeed.com/">Live map</a>
+    <a href="https://openseafeed.com/docs.html">API docs</a>
+    <a href="https://openseafeed.com/account.html">Account</a>
+  </nav>
+</header>"#;
 
 /// `GET /` - landing page. Shows only the sign-in methods this server has
 /// configured, plus the always-available magic-link form.

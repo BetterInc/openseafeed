@@ -10,12 +10,13 @@
   * { box-sizing: border-box; margin: 0; }
   body { background: #0b1420; color: #cfe3f5; font: 16px/1.6 system-ui, sans-serif; }
   a { color: #7fd4a8; }
-  header { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
-           border-bottom: 1px solid #1d3242; }
-  header h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
-  header nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
-  header nav a { text-decoration: none; color: #9fb8cd; }
-  header nav a:hover { color: #7fd4a8; }
+  .osf-nav { display: flex; gap: 1.5rem; align-items: baseline; padding: .8rem 1.5rem;
+             border-bottom: 1px solid #1d3242; background: #0b1420; }
+  .osf-nav .brand { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em;
+                    color: #7fd4a8; text-decoration: none; }
+  .osf-nav nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  .osf-nav nav a { text-decoration: none; color: #9fb8cd; }
+  .osf-nav nav a:hover, .osf-nav nav a.active { color: #7fd4a8; }
   main { max-width: 880px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
   .hero h2 { font-size: 2rem; line-height: 1.25; color: #fff; margin-bottom: .75rem; }
   .hero p { color: #9fb8cd; max-width: 40rem; }
@@ -43,13 +44,13 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>OPENSEAFEED</h1>
+<header class="osf-nav">
+  <a class="brand" href="https://openseafeed.com/">OPENSEAFEED</a>
   <nav>
+    <a class="active" href="https://openseafeed.com/">Home</a>
     <a href="https://stream.openseafeed.com/">Live map</a>
-    <a href="/docs.html">API docs</a>
-    <a href="/account.html">Sign in / API keys</a>
-    <a href="https://github.com/BetterInc/openseafeed">GitHub</a>
+    <a href="https://openseafeed.com/docs.html">API docs</a>
+    <a href="https://openseafeed.com/account.html">Account</a>
   </nav>
 </header>
 <main>
