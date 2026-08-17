@@ -60,8 +60,8 @@
 "use strict";
 const map = new maplibregl.Map({
   container: "map",
-  center: [10, 55],
-  zoom: 4,
+  center: [10, 45],
+  zoom: 3,
   attributionControl: { compact: true },
   style: {
     version: 8,
@@ -183,9 +183,11 @@ for (const layer of ["vessels", "vessels-moving"]) {
 
 // The map is a public window onto the network - viewers need no API key
 // (fanout's anonymous tier). Keys are for API consumers and are created on
-// the control plane. Anonymous viewing is capped to the free-tier area;
-// this box fits it and covers the waters the feeds actually report on.
-const VIEW_BBOX = [[[54, -5], [72, 32]]];
+// the control plane. Anonymous viewing is capped to the free-tier area
+// (30000 deg²); this box sits just under it and covers every major shipping
+// lane in the northern hemisphere plus the equatorial routes - i.e. all of
+// aisstream's global picture except the far south.
+const VIEW_BBOX = [[[-11, -180], [72, 180]]];
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
