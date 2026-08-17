@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSeaFeed — the open AIS network</title>
+<meta name="description" content="A community-owned AIS network: live vessel positions, open history, and free API keys. Contribute a receiver or feed and unlock the full firehose.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0b1420; color: #cfe3f5; font: 16px/1.6 system-ui, sans-serif; }
+  a { color: #7fd4a8; }
+  header { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
+           border-bottom: 1px solid #1d3242; }
+  header h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
+  header nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  header nav a { text-decoration: none; color: #9fb8cd; }
+  header nav a:hover { color: #7fd4a8; }
+  main { max-width: 880px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .hero h2 { font-size: 2rem; line-height: 1.25; color: #fff; margin-bottom: .75rem; }
+  .hero p { color: #9fb8cd; max-width: 40rem; }
+  .cta { margin: 1.75rem 0 3rem; display: flex; gap: .9rem; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: .55rem 1.2rem; border-radius: 6px; text-decoration: none;
+         font-weight: 600; }
+  .btn.primary { background: #14532d; color: #d6ffe4; border: 1px solid #1f7a44; }
+  .btn.primary:hover { background: #1a6b3a; }
+  .btn.ghost { border: 1px solid #24455f; color: #cfe3f5; }
+  .btn.ghost:hover { border-color: #7fd4a8; }
+  section { margin-top: 3rem; }
+  section h3 { color: #7fd4a8; font-size: 1.05rem; letter-spacing: .03em; margin-bottom: .6rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+  .card { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 8px; padding: 1rem 1.1rem; }
+  .card b { color: #fff; display: block; margin-bottom: .3rem; }
+  .card p, li { color: #9fb8cd; font-size: .95rem; }
+  code { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 4px;
+         padding: .1rem .4rem; font-size: .88em; color: #d6ffe4; }
+  pre { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 8px; padding: 1rem;
+        overflow-x: auto; font-size: .85rem; line-height: 1.5; }
+  ol { padding-left: 1.2rem; }
+  ol li { margin: .4rem 0; }
+  footer { border-top: 1px solid #1d3242; padding: 1.25rem 1.5rem;
+           color: #5f7a90; font-size: .85rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPENSEAFEED</h1>
+  <nav>
+    <a href="https://stream.openseafeed.com/">Live map</a>
+    <a href="/docs.html">API docs</a>
+    <a href="https://api.openseafeed.com/">Sign in / API keys</a>
+    <a href="https://github.com/BetterInc/openseafeed">GitHub</a>
+  </nav>
+</header>
+<main>
+  <div class="hero">
+    <h2>The open, community-owned AIS network.</h2>
+    <p>Live vessel positions from public national feeds and community receivers, merged,
+       deduplicated and streamed back out — free to watch, free to build on, and owned by
+       the people who feed it. Apache-2.0, no lock-in, history included.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="https://stream.openseafeed.com/">Watch the live map</a>
+    <a class="btn ghost" href="https://api.openseafeed.com/">Create an API key</a>
+    <a class="btn ghost" href="/docs.html">Read the API docs</a>
+  </div>
+
+  <section>
+    <h3>What you get</h3>
+    <div class="grid">
+      <div class="card"><b>Live stream</b>
+        <p>aisstream.io-compatible WebSocket of decoded AIS, enriched with names, ship types
+           and IMO numbers. No key needed inside the free-tier area.</p></div>
+      <div class="card"><b>Fleet snapshot</b>
+        <p>The whole fleet's current state as one cacheable request — positions, names,
+           particulars.</p></div>
+      <div class="card"><b>History</b>
+        <p>Every position is archived. Anonymous access covers the recent past;
+           keys unlock deep history, down to a five-year design horizon.</p></div>
+      <div class="card"><b>Contribute &amp; unlock</b>
+        <p>Feed us a receiver or an upstream and your account becomes a contributor:
+           unlimited bounding boxes and the freshest data. The network belongs to its feeders.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h3>Get started in three steps</h3>
+    <ol>
+      <li>Sign in at <a href="https://api.openseafeed.com/">api.openseafeed.com</a> with GitHub
+          or an email sign-in link.</li>
+      <li>Create a key on the dashboard — <code>osf_live_…</code> to consume,
+          <code>osf_feed_…</code> to contribute.</li>
+      <li>Connect:</li>
+    </ol>
+    <pre>// stream vessels over WebSocket (aisstream.io-compatible)
+const ws = new WebSocket("wss://stream.openseafeed.com/v1/stream");
+ws.onopen = () => ws.send(JSON.stringify({
+  APIKey: "osf_live_…",                       // optional: omit for the free tier
+  BoundingBoxes: [[[54, -5], [72, 32]]],
+}));
+ws.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
+    <pre># contribute NMEA from your receiver (TCP, one AUTH line first)
+( echo "AUTH osf_feed_…"; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111</pre>
+  </section>
+
+  <section>
+    <h3>Why open?</h3>
+    <p>AIS is broadcast in the clear by ships, for safety — yet most of it ends up behind
+       paywalls. OpenSeaFeed keeps the pipeline public: open source, open data, open history,
+       and a tier model with exactly one rule — those who give data get the most back.</p>
+  </section>
+</main>
+<footer>
+  <span>Apache-2.0 · <a href="https://github.com/BetterInc/openseafeed">source</a></span>
+  <span><a href="https://stream.openseafeed.com/">live map</a></span>
+  <span><a href="/docs.html">API docs</a></span>
+  <span><a href="https://api.openseafeed.com/">dashboard</a></span>
+</footer>
+</body>
+</html>

@@ -360,9 +360,21 @@ pub async fn magic_request(
     );
 
     match &state.cfg.smtp_url {
-        Some(_smtp) => {
-            // MVP: SMTP delivery is not wired up yet; log that we would send.
-            tracing::info!(%email, "magic link requested (SMTP delivery not yet implemented)");
+        Some(smtp) => {
+            // Send in the background: the response must not reveal whether
+            // the address exists or how long delivery takes.
+            let (smtp, from, to, link) = (
+                smtp.clone(),
+                state.cfg.smtp_from.clone(),
+                email.clone(),
+                link.clone(),
+            );
+            tokio::spawn(async move {
+                match send_magic_email(&smtp, &from, &to, &link).await {
+                    Ok(()) => tracing::info!(email = %to, "magic link emailed"),
+                    Err(err) => tracing::error!(%err, email = %to, "magic link email failed"),
+                }
+            });
         }
         None => {
             tracing::info!(%email, %link, "magic link (dev mode: no SMTP configured)");
@@ -420,4 +432,24 @@ pub async fn logout() -> Response {
         Redirect::to("/"),
     )
         .into_response()
+}
+
+/// Deliver one magic-link email over the configured SMTP relay
+/// (`OSF_SMTP_URL`, e.g. `smtps://user:pass@mail.example.org:465`).
+async fn send_magic_email(smtp_url: &str, from: &str, to: &str, link: &str) -> anyhow::Result<()> {
+    use lettre::message::header::ContentType;
+    use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+    let msg = Message::builder()
+        .from(from.parse()?)
+        .to(to.parse()?)
+        .subject("Your OpenSeaFeed sign-in link")
+        .header(ContentType::TEXT_PLAIN)
+        .body(format!(
+            "Sign in to OpenSeaFeed:\n\n{link}\n\nThe link is single-use and expires shortly. \
+             If you did not request this, ignore this email.\n"
+        ))?;
+    let mailer = AsyncSmtpTransport::<Tokio1Executor>::from_url(smtp_url)?.build();
+    mailer.send(msg).await?;
+    Ok(())
 }

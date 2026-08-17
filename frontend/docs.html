@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSeaFeed — API docs</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  .topbar-osf { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
+                background: #0b1420; border-bottom: 1px solid #1d3242;
+                font: 16px/1.4 system-ui, sans-serif; }
+  .topbar-osf h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
+  .topbar-osf nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  .topbar-osf a { text-decoration: none; color: #9fb8cd; }
+  .topbar-osf a:hover { color: #7fd4a8; }
+</style>
+</head>
+<body>
+<div class="topbar-osf">
+  <h1>OPENSEAFEED API</h1>
+  <nav>
+    <a href="/">Home</a>
+    <a href="https://stream.openseafeed.com/">Live map</a>
+    <a href="https://api.openseafeed.com/">Sign in / API keys</a>
+  </nav>
+</div>
+<div id="swagger"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  window.ui = SwaggerUIBundle({
+    url: "openapi.yaml",
+    dom_id: "#swagger",
+    deepLinking: true,
+    tryItOutEnabled: true,
+    defaultModelsExpandDepth: 0,
+  });
+</script>
+</body>
+</html>

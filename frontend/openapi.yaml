@@ -1,0 +1,344 @@
+openapi: 3.0.3
+info:
+  title: OpenSeaFeed API
+  version: "1.0"
+  description: |
+    The open, community-owned AIS network. All HTTP endpoints live on
+    `https://api.openseafeed.com`; the live WebSocket stream lives on
+    `wss://stream.openseafeed.com/v1/stream`; raw NMEA contribution goes to
+    `ingest.openseafeed.com`.
+
+    ## Keys and tiers
+
+    Keys are created on the [dashboard](https://api.openseafeed.com/) after
+    signing in with GitHub or an email sign-in link.
+
+    | kind | prefix | purpose |
+    |---|---|---|
+    | live | `osf_live_…` | consuming: stream, snapshot, history |
+    | feed | `osf_feed_…` | contributing an upstream feed |
+    | station | `osf_stn_…` | contributing your own receiver (via station registration) |
+
+    **Anonymous access is welcome** at the free tier: no key needed for the
+    stream (bounding boxes up to 30000 deg² of area), single-vessel state,
+    recent history (last 48 h, downsampled) and the delayed fleet snapshot.
+    Accounts that actively contribute a feed or receiver get the
+    `contributor` tier: unlimited stream area, the freshest snapshot, and
+    unclamped history.
+
+    ## Getting data: the WebSocket stream
+
+    Connect to `wss://stream.openseafeed.com/v1/stream` and send one JSON
+    subscription within 3 seconds (aisstream.io-compatible; resend at any
+    time to swap the subscription):
+
+    ```json
+    {
+      "APIKey": "osf_live_…",
+      "BoundingBoxes": [[[54, -5], [72, 32]]],
+      "FiltersShipMMSI": ["257970000"],
+      "FilterMessageTypes": ["PositionReport"]
+    }
+    ```
+
+    `APIKey` may be omitted (free tier). Corners are `[lat, lon]` pairs.
+    Each outgoing frame is one decoded AIS message:
+
+    ```json
+    {
+      "MessageType": "PositionReport",
+      "MetaData": {
+        "MMSI": 257970000, "ShipName": "XANTHIA",
+        "ShipType": 80, "IMO": 9246152,
+        "latitude": 59.48, "longitude": 21.39,
+        "time_utc": "2026-08-17T10:00:00Z"
+      },
+      "Message": { "PositionReport": { "Sog": 12.8, "Cog": 82.2, "...": "…" } }
+    }
+    ```
+
+    `ShipType` and `IMO` are OpenSeaFeed extensions over the aisstream.io
+    format, filled from the vessel's static messages and omitted when unknown.
+
+    ## Sending data: contributing a feed or receiver
+
+    Create an `osf_feed_…` key (or register a station for `osf_stn_…`), then
+    push raw NMEA (AIVDM/AIVDO sentences) one of two ways:
+
+    **TCP** — connect to `ingest.openseafeed.com:10111`, send one line
+    `AUTH osf_feed_…`, then stream NMEA lines:
+
+    ```
+    ( echo "AUTH osf_feed_…"; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111
+    ```
+
+    **WebSocket** — connect to `wss://ingest.openseafeed.com/v1/ingest?key=osf_feed_…`
+    (or send the key as `Authorization: Bearer …`) and send NMEA lines as text
+    frames. Ideal for AIS-catcher or browser/edge contributors.
+
+    Multi-sentence messages are reassembled server-side; invalid lines are
+    counted and dropped, never fatal.
+
+servers:
+  - url: https://api.openseafeed.com
+
+tags:
+  - name: vessels
+    description: Current state and history of the fleet (anonymous-friendly)
+  - name: account
+    description: Session-cookie authenticated dashboard API (sign in first)
+  - name: auth
+    description: Sign-in flows (GitHub OAuth, Google OAuth, email magic links)
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: query
+      name: key
+      description: An `osf_live_…` key. Omit entirely for anonymous free-tier access.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: osf_session
+      description: Signed session cookie set by the sign-in flows.
+  schemas:
+    Vessel:
+      type: object
+      description: Current state of one vessel, from the snapshotter.
+      properties:
+        mmsi: { type: integer, example: 257970000 }
+        lat: { type: number, example: 59.488 }
+        lon: { type: number, example: 21.397 }
+        sog: { type: number, description: Speed over ground, knots }
+        cog: { type: number, description: Course over ground, degrees }
+        hdg: { type: integer, description: True heading, degrees }
+        nav: { type: integer, description: AIS navigational status code }
+        name: { type: string, example: XANTHIA }
+        type: { type: integer, description: ITU ship-type code, example: 80 }
+        imo: { type: integer, example: 9246152 }
+        callsign: { type: string }
+        dest: { type: string, description: Declared destination }
+        draught: { type: number, description: Metres }
+        len: { type: integer, description: Length overall, metres }
+        beam: { type: integer, description: Beam, metres }
+        eta:
+          type: object
+          description: Raw AIS ETA block
+          properties:
+            Month: { type: integer }
+            Day: { type: integer }
+            Hour: { type: integer }
+            Minute: { type: integer }
+        ts: { type: integer, description: Unix milliseconds of last update }
+    HistoryPoint:
+      type: object
+      properties:
+        ts: { type: string, example: "2026-08-17 09:40:00" }
+        msg_type: { type: string, example: PositionReport }
+        lat: { type: number }
+        lon: { type: number }
+        sog: { type: number, nullable: true }
+        cog: { type: number, nullable: true }
+        heading: { type: integer, nullable: true }
+        nav_status: { type: integer, nullable: true }
+    ApiKey:
+      type: object
+      properties:
+        key: { type: string, example: osf_live_2472f0104bc95a5d3a32fcddba70a9a2 }
+        kind: { type: string, enum: [live, feed, station] }
+        label: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+
+paths:
+  /v1/vessels/{mmsi}:
+    get:
+      tags: [vessels]
+      summary: Current state of one vessel
+      description: Anonymous-friendly. Warm across restarts (state is rebuilt from history).
+      security: [{}, { apiKey: [] }]
+      parameters:
+        - { name: mmsi, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Current state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Vessel" }
+        "404": { description: Vessel not seen in the last 24 h }
+
+  /v1/snapshot:
+    get:
+      tags: [vessels]
+      summary: Full-fleet snapshot
+      description: |
+        Every vessel's current state as one gzip-compressed JSON document,
+        regenerated continuously. Anonymous/free tier receives a snapshot at
+        least 10 minutes old; contributors get the newest.
+      security: [{}, { apiKey: [] }]
+      responses:
+        "200":
+          description: Gzip-compressed JSON array of Vessel objects
+          headers:
+            x-osf-generated-at: { schema: { type: integer }, description: Unix ms }
+            x-osf-vessels: { schema: { type: integer } }
+
+  /v1/history/{mmsi}:
+    get:
+      tags: [vessels]
+      summary: Position history of one vessel
+      description: |
+        Stored track from the archive. Anonymous requests are clamped to the
+        last 48 hours and always downsampled (step ≥ 30 s); a valid key
+        unlocks the full range (five-year design horizon).
+      security: [{}, { apiKey: [] }]
+      parameters:
+        - { name: mmsi, in: path, required: true, schema: { type: integer } }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: "Default: to − 24 h" }
+        - { name: to, in: query, schema: { type: string, format: date-time }, description: "Default: now" }
+        - { name: step, in: query, schema: { type: integer, minimum: 10 }, description: Downsample to one point per step seconds
+          }
+        - { name: limit, in: query, schema: { type: integer, maximum: 50000 } }
+      responses:
+        "200":
+          description: Track
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mmsi: { type: integer }
+                  from: { type: string, format: date-time }
+                  to: { type: string, format: date-time }
+                  count: { type: integer }
+                  points:
+                    type: array
+                    items: { $ref: "#/components/schemas/HistoryPoint" }
+
+  /v1/photos/{mmsi}:
+    get:
+      tags: [vessels]
+      summary: Free-licensed vessel photo
+      description: |
+        Wikimedia Commons photo lookup (Wikidata, IMO-first), cached
+        server-side. Attribution via `page_url` is required when displaying
+        the image. Coverage is honest-but-thin — famous ships, ferries and
+        large cargo mostly.
+      parameters:
+        - { name: mmsi, in: path, required: true, schema: { type: integer } }
+        - { name: imo, in: query, schema: { type: integer }, description: Greatly improves hit rate when known }
+      responses:
+        "200":
+          description: Lookup result (found may be false)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  found: { type: boolean }
+                  image_url: { type: string, nullable: true }
+                  page_url: { type: string, nullable: true, description: Commons page for attribution }
+                  source: { type: string, example: wikimedia-commons }
+
+  /v1/me:
+    get:
+      tags: [account]
+      summary: Your profile, keys, stations and tier
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { description: Profile with keys and stations }
+        "401": { description: Not signed in }
+
+  /v1/keys:
+    post:
+      tags: [account]
+      summary: Create an API key
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [live, feed] }
+                label: { type: string }
+      responses:
+        "201":
+          description: The new key (shown once — store it)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKey" }
+        "401": { description: Not signed in }
+
+  /v1/keys/{key}:
+    delete:
+      tags: [account]
+      summary: Revoke one of your keys
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Revoked }
+        "401": { description: Not signed in }
+
+  /v1/stations:
+    get:
+      tags: [account]
+      summary: List your stations
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { description: Stations with their osf_stn_ keys }
+    post:
+      tags: [account]
+      summary: Register a receiver station
+      description: Returns the station's `osf_stn_…` key. A station seen in the last 7 days makes you a contributor.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                lat: { type: number }
+                lon: { type: number }
+      responses:
+        "201": { description: Station created }
+
+  /auth/magic:
+    post:
+      tags: [auth]
+      summary: Request an email sign-in link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200": { description: Always OK (does not reveal whether the address exists) }
+
+  /auth/github:
+    get:
+      tags: [auth]
+      summary: Sign in with GitHub
+      description: Browser redirect flow; ends signed-in on the dashboard.
+      responses:
+        "302": { description: Redirect to GitHub authorize }
+        "503": { description: GitHub sign-in not configured on this server }
+
+  /auth/google:
+    get:
+      tags: [auth]
+      summary: Sign in with Google
+      responses:
+        "302": { description: Redirect to Google authorize }
+        "503": { description: Google sign-in not configured on this server }

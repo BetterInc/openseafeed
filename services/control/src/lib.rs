@@ -49,6 +49,7 @@ pub struct Config {
     pub github: Option<OAuthProvider>,
     pub google: Option<OAuthProvider>,
     pub smtp_url: Option<String>,
+    pub smtp_from: String,
 }
 
 fn provider_from_env(id_var: &str, secret_var: &str) -> Option<OAuthProvider> {
@@ -100,6 +101,10 @@ impl Config {
             github: provider_from_env("OSF_GITHUB_CLIENT_ID", "OSF_GITHUB_CLIENT_SECRET"),
             google: provider_from_env("OSF_GOOGLE_CLIENT_ID", "OSF_GOOGLE_CLIENT_SECRET"),
             smtp_url: std::env::var("OSF_SMTP_URL").ok().filter(|s| !s.is_empty()),
+            smtp_from: std::env::var("OSF_SMTP_FROM")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "OpenSeaFeed <no-reply@openseafeed.com>".to_string()),
         })
     }
 
@@ -118,6 +123,7 @@ impl Config {
             github: None,
             google: None,
             smtp_url: None,
+            smtp_from: "OpenSeaFeed <no-reply@openseafeed.com>".to_string(),
         }
     }
 }
