@@ -37,6 +37,11 @@ pub struct MetaData {
     pub mmsi_string: u32,
     #[serde(rename = "ShipName")]
     pub ship_name: String,
+    /// ITU ship-type code (70-79 cargo, 80-89 tanker, ...) remembered from
+    /// the vessel's static messages. Extension over aisstream.io's MetaData,
+    /// omitted from the JSON when unknown.
+    #[serde(rename = "ShipType", default, skip_serializing_if = "Option::is_none")]
+    pub ship_type: Option<u8>,
     pub latitude: f64,
     pub longitude: f64,
     /// RFC 3339 UTC timestamp string.
@@ -155,6 +160,7 @@ mod tests {
                 mmsi: m.mmsi,
                 mmsi_string: m.mmsi,
                 ship_name: String::new(),
+                ship_type: None,
                 latitude: lat,
                 longitude: lon,
                 time_utc: "2026-07-24T00:00:00Z".into(),

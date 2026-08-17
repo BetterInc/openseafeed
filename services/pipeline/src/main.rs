@@ -25,6 +25,10 @@ const CACHE_CAP: usize = 1_000_000;
 /// re-broadcast its statics (type 5 / 24A, a ~6-minute cycle per vessel).
 const NAMES_BUCKET: &str = "vessel-names";
 
+/// Same persistence for MMSI -> ITU ship-type code (types 5, 19, 24B), which
+/// the map uses to color vessels by category.
+const TYPES_BUCKET: &str = "vessel-types";
+
 #[derive(Default)]
 struct Stats {
     received: u64,
@@ -37,6 +41,8 @@ struct Stats {
 struct Enrichment {
     /// MMSI -> vessel name, from static messages.
     names: HashMap<u32, String>,
+    /// MMSI -> ITU ship-type code, from static messages.
+    types: HashMap<u32, u8>,
     /// MMSI -> last known geohash cell + position, for routing messages that
     /// carry no position (static data) to the cell where subscribers of that
     /// area will see them.
@@ -48,6 +54,9 @@ impl Enrichment {
         // Blunt but effective bound; a real LRU is not worth it at this rate.
         if self.names.len() > CACHE_CAP {
             self.names.clear();
+        }
+        if self.types.len() > CACHE_CAP {
+            self.types.clear();
         }
         if self.last_pos.len() > CACHE_CAP {
             self.last_pos.clear();
@@ -72,26 +81,30 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     let js = async_nats::jetstream::new(client.clone());
-    let names_kv = match js.get_key_value(NAMES_BUCKET).await {
-        Ok(kv) => kv,
-        Err(_) => {
-            js.create_key_value(async_nats::jetstream::kv::Config {
-                bucket: NAMES_BUCKET.to_string(),
-                description: "MMSI -> last seen vessel name".to_string(),
-                history: 1,
-                ..Default::default()
-            })
-            .await?
-        }
-    };
+    let names_kv = open_bucket(&js, NAMES_BUCKET, "MMSI -> last seen vessel name").await?;
+    let types_kv = open_bucket(&js, TYPES_BUCKET, "MMSI -> ITU ship-type code").await?;
 
     let mut window = dedupe::Window::new(Duration::from_secs(10));
     let mut enrich = Enrichment {
         names: HashMap::new(),
+        types: HashMap::new(),
         last_pos: HashMap::new(),
     };
-    warm_names(&names_kv, &mut enrich.names).await;
-    tracing::info!(names = enrich.names.len(), "name cache warmed from KV");
+    warm_kv(&names_kv, |mmsi, v| {
+        enrich.names.insert(mmsi, v.to_string());
+    })
+    .await;
+    warm_kv(&types_kv, |mmsi, v| {
+        if let Ok(t) = v.parse() {
+            enrich.types.insert(mmsi, t);
+        }
+    })
+    .await;
+    tracing::info!(
+        names = enrich.names.len(),
+        types = enrich.types.len(),
+        "enrichment caches warmed from KV"
+    );
     let mut stats = Stats::default();
     let mut last_report = Instant::now();
 
@@ -105,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         if let Err(e) = handle(
             &client,
             &names_kv,
+            &types_kv,
             &msg.payload,
             &mut window,
             &mut enrich,
@@ -134,14 +148,33 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load every current entry from the names bucket into the in-memory cache.
+/// Open (or create) one of the enrichment KV buckets.
+async fn open_bucket(
+    js: &async_nats::jetstream::Context,
+    bucket: &str,
+    description: &str,
+) -> anyhow::Result<async_nats::jetstream::kv::Store> {
+    match js.get_key_value(bucket).await {
+        Ok(kv) => Ok(kv),
+        Err(_) => Ok(js
+            .create_key_value(async_nats::jetstream::kv::Config {
+                bucket: bucket.to_string(),
+                description: description.to_string(),
+                history: 1,
+                ..Default::default()
+            })
+            .await?),
+    }
+}
+
+/// Load every current entry from a KV bucket into an in-memory cache.
 /// Entries stream oldest-first and `delta` is the distance to the newest, so
 /// 0 means caught up. An empty bucket yields nothing, hence the timeout.
-async fn warm_names(kv: &async_nats::jetstream::kv::Store, names: &mut HashMap<u32, String>) {
+async fn warm_kv(kv: &async_nats::jetstream::kv::Store, mut apply: impl FnMut(u32, &str)) {
     let mut watch = match kv.watch_all_from_revision(1).await {
         Ok(w) => w,
         Err(e) => {
-            tracing::warn!(error = %e, "name cache warm-up unavailable");
+            tracing::warn!(error = %e, "cache warm-up unavailable");
             return;
         }
     };
@@ -149,10 +182,10 @@ async fn warm_names(kv: &async_nats::jetstream::kv::Store, names: &mut HashMap<u
         while let Some(entry) = watch.next().await {
             let Ok(entry) = entry else { break };
             if entry.operation == async_nats::jetstream::kv::Operation::Put {
-                if let (Ok(mmsi), Ok(name)) =
+                if let (Ok(mmsi), Ok(value)) =
                     (entry.key.parse::<u32>(), std::str::from_utf8(&entry.value))
                 {
-                    names.insert(mmsi, name.to_string());
+                    apply(mmsi, value);
                 }
             }
             if entry.delta == 0 {
@@ -164,13 +197,15 @@ async fn warm_names(kv: &async_nats::jetstream::kv::Store, names: &mut HashMap<u
         .await
         .is_err()
     {
-        tracing::warn!("name cache warm-up timed out; continuing with what loaded");
+        tracing::warn!("cache warm-up timed out; continuing with what loaded");
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle(
     client: &async_nats::Client,
     names_kv: &async_nats::jetstream::kv::Store,
+    types_kv: &async_nats::jetstream::kv::Store,
     payload: &[u8],
     window: &mut dedupe::Window,
     enrich: &mut Enrichment,
@@ -189,7 +224,7 @@ async fn handle(
     }
     stats.decoded += 1;
 
-    // Update enrichment caches; persist new/changed names so they survive
+    // Update enrichment caches; persist new/changed values so they survive
     // restarts. A lost write self-heals on the vessel's next static broadcast.
     if let Some(name) = &msg.name {
         if enrich.names.get(&msg.mmsi) != Some(name) {
@@ -199,6 +234,20 @@ async fn handle(
                 .await
             {
                 tracing::debug!(error = %e, mmsi = msg.mmsi, "name persist failed");
+            }
+        }
+    }
+    if let Some(ship_type) = msg.ship_type {
+        if enrich.types.get(&msg.mmsi) != Some(&ship_type) {
+            enrich.types.insert(msg.mmsi, ship_type);
+            if let Err(e) = types_kv
+                .put(
+                    msg.mmsi.to_string(),
+                    ship_type.to_string().into_bytes().into(),
+                )
+                .await
+            {
+                tracing::debug!(error = %e, mmsi = msg.mmsi, "type persist failed");
             }
         }
     }
@@ -229,6 +278,7 @@ async fn handle(
             mmsi: msg.mmsi,
             mmsi_string: msg.mmsi,
             ship_name: enrich.names.get(&msg.mmsi).cloned().unwrap_or_default(),
+            ship_type: enrich.types.get(&msg.mmsi).copied(),
             latitude: meta_lat,
             longitude: meta_lon,
             time_utc,

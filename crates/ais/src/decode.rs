@@ -39,6 +39,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
 
     let mut position = None;
     let mut name = None;
+    let mut ship_type = None;
 
     let packet = match id {
         1..=3 => {
@@ -109,6 +110,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
                 spare: bs.bit(423),
             };
             name = non_empty(&p.name);
+            ship_type = Some(p.ship_type);
             Packet::ShipStaticData(p)
         }
         9 => {
@@ -176,6 +178,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
             };
             position = valid_position(p.latitude, p.longitude);
             name = non_empty(&p.name);
+            ship_type = Some(p.ship_type);
             Packet::ExtendedClassBPositionReport(p)
         }
         21 => {
@@ -221,6 +224,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
                 1 => {
                     need(168)?;
                     p.ship_type = bs.uint(40, 8) as u8;
+                    ship_type = Some(p.ship_type);
                     p.vendor_id_name = bs.string(48, 18);
                     p.vender_id_model = bs.uint(66, 4) as u8;
                     p.vender_id_serial = bs.uint(70, 20) as u32;
@@ -261,6 +265,7 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
         packet,
         position,
         name,
+        ship_type,
     })
 }
 

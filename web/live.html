@@ -48,12 +48,15 @@
 </header>
 <div id="map"></div>
 <div id="legend">
-  <span style="color:#7fd4a8">&#9650;</span> under way (points along course)&ensp;
-  <i style="background:#7fd4a8"></i>stationary<br>
-  color = freshness:
-  <i style="background:#7fd4a8"></i>&lt;10 s&ensp;
-  <i style="background:#3f7d97"></i>&lt;2 min&ensp;
-  <i style="background:#27455c"></i>older
+  <span style="color:#8fa3b0">&#9650;</span> under way &middot; <i style="background:#8fa3b0"></i>stationary &middot; fades with age<br>
+  <i style="background:#4fc06f"></i>cargo&ensp;
+  <i style="background:#e05252"></i>tanker&ensp;
+  <i style="background:#4f9fe8"></i>passenger&ensp;
+  <i style="background:#e8a54f"></i>fishing<br>
+  <i style="background:#b98ae8"></i>sailing / pleasure&ensp;
+  <i style="background:#e8d94f"></i>tug / pilot / SAR&ensp;
+  <i style="background:#5fd8d2"></i>high-speed&ensp;
+  <i style="background:#8fa3b0"></i>other
 </div>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
@@ -83,14 +86,16 @@ const map = new maplibregl.Map({
       { id: "base", type: "raster", source: "base" },
       { id: "seamark", type: "raster", source: "seamark",
         layout: { visibility: "none" } },
-      // Stationary vessels: dots. Freshness: bright green fading toward
-      // the deep blue of the sea.
+      // Stationary vessels: dots. Color = ship-type category (see
+      // CAT_COLORS below, kept in sync by buildColorExpr); opacity = age.
       { id: "vessels", type: "circle", source: "vessels",
         filter: ["!=", ["get", "moving"], 1],
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.6, 8, 3.5, 12, 6],
-          "circle-color": ["step", ["get", "age"], "#7fd4a8", 10, "#3f7d97", 120, "#27455c"],
-          "circle-opacity": 0.95,
+          "circle-color": ["match", ["get", "cat"],
+            1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
+            5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
+          "circle-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35],
         } },
       // Under-way vessels: arrows rotated to course over ground.
       { id: "vessels-moving", type: "symbol", source: "vessels",
@@ -106,7 +111,10 @@ const map = new maplibregl.Map({
           "icon-ignore-placement": true,
         },
         paint: {
-          "icon-color": ["step", ["get", "age"], "#7fd4a8", 10, "#3f7d97", 120, "#27455c"],
+          "icon-color": ["match", ["get", "cat"],
+            1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
+            5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
+          "icon-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35],
         } },
     ],
   },
@@ -133,9 +141,31 @@ map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
 document.getElementById("seamarks").onchange = (e) =>
   map.setLayoutProperty("seamark", "visibility", e.target.checked ? "visible" : "none");
 
-const seen = new Map(); // mmsi -> {lon, lat, t(ms), name, sog, cog, type}
+const seen = new Map(); // mmsi -> {lon, lat, t(ms), name, sog, cog, type, stype}
 let total = 0, windowCount = 0;
 let ws = null;
+
+// ITU ship-type code -> category index; keep in sync with the layer "match"
+// expressions and the legend.
+const CAT_NAMES = ["vessel", "cargo", "tanker", "passenger", "fishing",
+                   "sailing / pleasure", "tug / pilot / SAR", "high-speed craft"];
+function typeCat(t) {
+  if (t == null) return 0;
+  if (t >= 70 && t <= 79) return 1;
+  if (t >= 80 && t <= 89) return 2;
+  if (t >= 60 && t <= 69) return 3;
+  if (t === 30) return 4;
+  if (t === 36 || t === 37) return 5;
+  if (t >= 50 && t <= 59) return 6;
+  if (t >= 40 && t <= 49) return 7;
+  return 0;
+}
+
+// The control plane serves free-licensed vessel photos (Wikidata/Commons)
+// with CORS open; in dev the control plane runs on :8083.
+const API_BASE = location.host.startsWith("stream.")
+  ? location.origin.replace("//stream.", "//api.")
+  : "http://localhost:8083";
 
 function refresh() {
   const now = Date.now();
@@ -149,7 +179,8 @@ function refresh() {
       type: "Feature",
       geometry: { type: "Point", coordinates: [v.lon, v.lat] },
       properties: { mmsi, age: (now - v.t) / 1000, name: v.name || "",
-                    sog: v.sog, cog: v.cog, type: v.type, moving, rot: rot || 0 },
+                    sog: v.sog, cog: v.cog, type: v.type, moving, rot: rot || 0,
+                    cat: typeCat(v.stype), stype: v.stype },
     });
   }
   const src = map.getSource("vessels");
@@ -165,17 +196,39 @@ for (const layer of ["vessels", "vessels-moving"]) {
   map.on("click", layer, (e) => {
     const p = e.features[0].properties;
     const esc = (s) => String(s).replace(/[<>&]/g, "");
+    const kind = CAT_NAMES[p.cat] + (p.stype != null ? ` (type ${esc(p.stype)})` : "");
+    const photoId = `photo-${p.mmsi}`;
     new maplibregl.Popup()
       .setLngLat(e.features[0].geometry.coordinates)
       .setHTML(
         `<b>${esc(p.name) || "unnamed"}</b><br>` +
-        `MMSI ${esc(p.mmsi)}<br>` +
+        `MMSI ${esc(p.mmsi)} &middot; ${kind}<br>` +
         (p.moving == 1
           ? `${esc(p.sog)} kn, course ${Math.round(p.rot)}&deg;<br>`
           : `stationary<br>`) +
-        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago`
+        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago` +
+        `<div id="${photoId}"></div>`
       )
       .addTo(map);
+    // Free-licensed photo, when Commons has one for this MMSI. Built via DOM
+    // APIs so nothing from the network is ever injected as HTML.
+    fetch(`${API_BASE}/v1/vessels/${p.mmsi}/photo`)
+      .then((r) => r.json())
+      .then((ph) => {
+        const box = document.getElementById(photoId);
+        if (!box || !ph.found) return;
+        const img = document.createElement("img");
+        img.src = ph.image_url;
+        img.style.cssText = "max-width:240px;border-radius:4px;margin-top:.4rem;display:block";
+        const credit = document.createElement("a");
+        credit.href = ph.page_url;
+        credit.target = "_blank";
+        credit.rel = "noopener";
+        credit.textContent = "photo · Wikimedia Commons";
+        credit.style.cssText = "font-size:11px;color:#7f9ab0";
+        box.append(img, credit);
+      })
+      .catch(() => {});
   });
   map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
@@ -216,6 +269,7 @@ function connect() {
       cog: typeof pkt.Cog === "number" && pkt.Cog < 360 ? pkt.Cog : prev.cog,
       heading: heading !== undefined ? heading : prev.heading,
       type: m.MessageType,
+      stype: typeof md.ShipType === "number" ? md.ShipType : prev.stype,
     });
   };
   ws.onclose = () => { status.textContent = "disconnected — retrying in 3s"; setTimeout(connect, 3000); };

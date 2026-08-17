@@ -107,6 +107,15 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             used_at    TEXT
         );
 
+        -- Cached Wikimedia Commons photo lookups, keyed by MMSI. NULL
+        -- image_url = "looked up, nothing found" (negative cache).
+        CREATE TABLE IF NOT EXISTS vessel_photos (
+            mmsi       INTEGER PRIMARY KEY,
+            image_url  TEXT,
+            page_url   TEXT,
+            fetched_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
         CREATE INDEX IF NOT EXISTS idx_stations_user ON stations(user_id);
         CREATE INDEX IF NOT EXISTS idx_stations_key  ON stations(key);
@@ -482,4 +491,44 @@ pub fn consume_magic_token(conn: &Connection, token: &str) -> Result<Option<Stri
         params![now_rfc3339(), token],
     )?;
     Ok(Some(email))
+}
+
+// --- vessel photos ----------------------------------------------------------
+
+/// One cached photo lookup; `image_url = None` means the lookup ran and found
+/// nothing (negative cache).
+pub struct VesselPhoto {
+    pub image_url: Option<String>,
+    pub page_url: Option<String>,
+    pub fetched_at: String,
+}
+
+pub fn photo_get(conn: &Connection, mmsi: u32) -> Result<Option<VesselPhoto>> {
+    let row = conn
+        .query_row(
+            "SELECT image_url, page_url, fetched_at FROM vessel_photos WHERE mmsi = ?1",
+            params![mmsi],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    Ok(row.map(|(image_url, page_url, fetched_at)| VesselPhoto {
+        image_url,
+        page_url,
+        fetched_at,
+    }))
+}
+
+pub fn photo_put(
+    conn: &Connection,
+    mmsi: u32,
+    image_url: Option<&str>,
+    page_url: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO vessel_photos (mmsi, image_url, page_url, fetched_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(mmsi) DO UPDATE SET image_url = ?2, page_url = ?3, fetched_at = ?4",
+        params![mmsi, image_url, page_url, now_rfc3339()],
+    )?;
+    Ok(())
 }

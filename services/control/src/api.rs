@@ -153,3 +153,93 @@ pub async fn list_stations(State(state): State<AppState>, headers: HeaderMap) ->
         Err(err) => internal_error(err),
     }
 }
+
+// --- vessel photos ----------------------------------------------------------
+
+/// `GET /v1/vessels/{mmsi}/photo` — free-licensed photo for a vessel, looked
+/// up on Wikidata (MMSI property P587 -> Commons image P18) and cached in
+/// sqlite. Public and CORS-open: the live map calls it cross-origin from the
+/// stream host. Coverage is honest-but-thin: famous ships, ferries, navy and
+/// big cargo have Commons photos; small craft essentially never do.
+pub async fn vessel_photo(State(state): State<AppState>, Path(mmsi): Path<u32>) -> Response {
+    const POSITIVE_TTL_DAYS: i64 = 30;
+    const NEGATIVE_TTL_DAYS: i64 = 7;
+
+    {
+        let conn = state.db.lock().await;
+        if let Ok(Some(p)) = db::photo_get(&conn, mmsi) {
+            let ttl = if p.image_url.is_some() {
+                POSITIVE_TTL_DAYS
+            } else {
+                NEGATIVE_TTL_DAYS
+            };
+            let fresh = chrono::DateTime::parse_from_rfc3339(&p.fetched_at)
+                .map(|t| {
+                    chrono::Utc::now() - t.with_timezone(&chrono::Utc) < chrono::Duration::days(ttl)
+                })
+                .unwrap_or(false);
+            if fresh {
+                return photo_response(p.image_url, p.page_url);
+            }
+        }
+    }
+
+    let query =
+        format!(r#"SELECT ?img WHERE {{ ?item wdt:P587 "{mmsi}" . ?item wdt:P18 ?img }} LIMIT 1"#);
+    let resp = state
+        .http
+        .get("https://query.wikidata.org/sparql")
+        .query(&[("format", "json"), ("query", query.as_str())])
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status());
+    let body: serde_json::Value = match resp {
+        Ok(r) => match r.json().await {
+            Ok(v) => v,
+            Err(err) => return wikidata_unavailable(err),
+        },
+        Err(err) => return wikidata_unavailable(err),
+    };
+
+    // P18 arrives as a Special:FilePath URL; ?width= makes Commons serve a
+    // thumbnail, and swapping in File: yields the attribution page.
+    let (image_url, page_url) = match body["results"]["bindings"][0]["img"]["value"].as_str() {
+        Some(raw) => {
+            let https = raw.replacen("http://", "https://", 1);
+            (
+                Some(format!("{https}?width=640")),
+                Some(https.replacen("Special:FilePath/", "File:", 1)),
+            )
+        }
+        None => (None, None),
+    };
+
+    {
+        let conn = state.db.lock().await;
+        if let Err(err) = db::photo_put(&conn, mmsi, image_url.as_deref(), page_url.as_deref()) {
+            tracing::warn!(%err, mmsi, "caching vessel photo failed");
+        }
+    }
+    photo_response(image_url, page_url)
+}
+
+/// Wikidata being down must not cache a false "no photo": report and move on
+/// without writing the negative result.
+fn wikidata_unavailable(err: impl std::fmt::Display) -> Response {
+    tracing::warn!(%err, "wikidata lookup failed");
+    photo_response(None, None)
+}
+
+fn photo_response(image_url: Option<String>, page_url: Option<String>) -> Response {
+    (
+        [(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+        Json(serde_json::json!({
+            "found": image_url.is_some(),
+            "image_url": image_url,
+            "page_url": page_url,
+            "source": "wikimedia-commons",
+        })),
+    )
+        .into_response()
+}

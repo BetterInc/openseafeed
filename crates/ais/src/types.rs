@@ -306,6 +306,8 @@ pub struct Message {
     pub position: Option<(f64, f64)>,
     /// Vessel/aid name, when the message carries one (types 5, 19, 21, 24A).
     pub name: Option<String>,
+    /// ITU ship-type code, when the message carries one (types 5, 19, 24B).
+    pub ship_type: Option<u8>,
 }
 
 impl Message {
