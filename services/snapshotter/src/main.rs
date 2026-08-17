@@ -192,7 +192,8 @@ async fn warm_from_history(app: Arc<App>) {
                 argMax(heading, ts) AS hdg, argMax(nav_status, ts) AS nav, \
                 toUnixTimestamp64Milli(max(ts)) AS ts \
          FROM {db}.positions WHERE ts > now() - INTERVAL 24 HOUR \
-         GROUP BY mmsi FORMAT JSONEachRow"
+         GROUP BY mmsi FORMAT JSONEachRow \
+         SETTINGS output_format_json_quote_64bit_integers = 0"
     ))
     .await;
     let statics = ch_query(format!(
