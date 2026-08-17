@@ -27,6 +27,11 @@
       font: 13px/1.5 system-ui, sans-serif; padding: .6rem .8rem; }
   .maplibregl-popup-tip { border-top-color: #24455f; }
   .maplibregl-popup-content b { color: #7fd4a8; }
+  .maplibregl-popup-content a { color: #7fd4a8; }
+  .maplibregl-popup-content img { max-width: 100%; border-radius: 4px;
+      margin-top: .4rem; display: block; }
+  .maplibregl-popup-content .credit { font-size: 11px; color: #7f9ab0; }
+  .maplibregl-popup-close-button { color: #7f9ab0; z-index: 1; }
   #detail { position: absolute; top: 0; right: 0; bottom: 0; width: min(380px, 100%);
             background: rgba(11,20,32,.97); border-left: 1px solid #1d3242; z-index: 10;
             overflow-y: auto; padding: 1rem; display: none; }
@@ -250,7 +255,7 @@ for (const layer of ["vessels", "vessels-moving"]) {
     const esc = (s) => String(s).replace(/[<>&]/g, "");
     const kind = CAT_NAMES[p.cat] + (p.stype != null ? ` (type ${esc(p.stype)})` : "");
     const photoId = `photo-${p.mmsi}`;
-    new maplibregl.Popup()
+    new maplibregl.Popup({ maxWidth: "280px" })
       .setLngLat(e.features[0].geometry.coordinates)
       .setHTML(
         `<b>${esc(p.name) || "unnamed"}</b><br>` +
