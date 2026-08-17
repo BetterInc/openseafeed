@@ -334,6 +334,32 @@ function renderDetail() {
   }
 }
 
+function drawTrail() {
+  const src = map.getSource("trail");
+  if (src && trail.length > 1) {
+    src.setData({ type: "Feature", properties: {},
+      geometry: { type: "LineString", coordinates: trail } });
+  }
+}
+
+// Draw the vessel's stored track (the archiver keeps every position in
+// ClickHouse; anonymous access covers the last 48h, downsampled). Live
+// positions received while the panel is open then extend it.
+function loadTrack(mmsi) {
+  fetch(`${API_BASE}/v1/history/${mmsi}?step=60`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((h) => {
+      if (!h || detailMmsi !== mmsi || !Array.isArray(h.points)) return;
+      const pts = h.points
+        .filter((pt) => typeof pt.lat === "number" && Math.abs(pt.lat) <= 90 &&
+                        Math.abs(pt.lon) <= 180 && (pt.lat || pt.lon))
+        .map((pt) => [pt.lon, pt.lat]);
+      trail = pts.concat(trail);
+      drawTrail();
+    })
+    .catch(() => {});
+}
+
 // Seed the panel (and the map) from the snapshotter's current state, so a
 // shared #vessel link shows the ship immediately instead of waiting for its
 // next broadcast. Live stream messages then take over.
@@ -378,6 +404,7 @@ function route() {
     dEl.classList.add("open");
     renderDetail();
     seedVessel(detailMmsi);
+    loadTrack(detailMmsi);
     const v = seen.get(detailMmsi);
     if (v) map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
   } else {
@@ -449,10 +476,7 @@ function connect() {
     if (detailMmsi === md.MMSI) {
       if (typeof md.latitude === "number" && (md.latitude || md.longitude)) {
         trail.push([md.longitude, md.latitude]);
-        if (trail.length > 1) {
-          map.getSource("trail").setData({ type: "Feature", properties: {},
-            geometry: { type: "LineString", coordinates: trail } });
-        }
+        drawTrail();
       }
       renderDetail();
     }

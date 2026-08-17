@@ -48,16 +48,28 @@ async fn get_history(
     Path(mmsi): Path<u32>,
     Query(p): Query<Params>,
 ) -> impl IntoResponse {
-    let Some(key) = p.key.as_deref() else {
-        return (StatusCode::UNAUTHORIZED, "missing ?key=").into_response();
+    // No key = anonymous (the public live map's detail panel): recent history
+    // only, always downsampled. Deep history stays behind a key. A key that
+    // IS presented must still be valid.
+    let anonymous = match p.key.as_deref() {
+        None => true,
+        Some(key) => {
+            if state.validator.validate(key).await.is_none() {
+                return (StatusCode::FORBIDDEN, "invalid key").into_response();
+            }
+            false
+        }
     };
-    if state.validator.validate(key).await.is_none() {
-        return (StatusCode::FORBIDDEN, "invalid key").into_response();
-    }
 
     let to = p.to.unwrap_or_else(Utc::now);
-    let from = p.from.unwrap_or(to - ChronoDuration::hours(24));
-    let limit = p.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let mut from = p.from.unwrap_or(to - ChronoDuration::hours(24));
+    let mut step = p.step;
+    let mut limit = p.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    if anonymous {
+        from = from.max(Utc::now() - ChronoDuration::hours(48));
+        step = Some(step.unwrap_or(60).max(30));
+        limit = limit.min(DEFAULT_LIMIT);
+    }
     // All interpolated values are numerics or chrono-formatted timestamps —
     // no free-text reaches the SQL.
     let range = format!(
@@ -67,7 +79,7 @@ async fn get_history(
         from = from.format("%Y-%m-%d %H:%M:%S%.3f"),
         to = to.format("%Y-%m-%d %H:%M:%S%.3f"),
     );
-    let sql = match p.step {
+    let sql = match step {
         // Downsampled: first observation of each time bucket.
         Some(step) => {
             let step = step.max(10);
@@ -97,14 +109,19 @@ async fn get_history(
                 .lines()
                 .filter_map(|l| serde_json::from_str(l).ok())
                 .collect();
-            Json(serde_json::json!({
-                "mmsi": mmsi,
-                "from": from.to_rfc3339(),
-                "to": to.to_rfc3339(),
-                "count": points.len(),
-                "points": points,
-            }))
-            .into_response()
+            // CORS-open: the live map's detail panel calls this cross-origin
+            // from the stream host.
+            (
+                [(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+                Json(serde_json::json!({
+                    "mmsi": mmsi,
+                    "from": from.to_rfc3339(),
+                    "to": to.to_rfc3339(),
+                    "count": points.len(),
+                    "points": points,
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "history query failed");
