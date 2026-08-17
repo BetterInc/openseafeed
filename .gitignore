@@ -18,3 +18,4 @@ snapshots/
 control.db
 nohup.out
 .e2e-venv/
+.wrangler/
