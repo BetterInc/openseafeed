@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenSeaFeed — live</title>
+<title>OpenSeaFeed - live</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
   :root { color-scheme: dark; }
@@ -67,7 +67,7 @@
 </header>
 <div id="map"></div>
 <div id="legend">
-  <span style="color:#8fa3b0">&#9650;</span> under way &middot; <i style="background:#8fa3b0"></i>stationary &middot; fades with age<br>
+  <span style="color:#8fa3b0">&#9650;</span> under way - <i style="background:#8fa3b0"></i>stationary - fades with age<br>
   <i style="background:#4fc06f"></i>cargo&ensp;
   <i style="background:#e05252"></i>tanker&ensp;
   <i style="background:#4f9fe8"></i>passenger&ensp;
@@ -78,7 +78,7 @@
   <i style="background:#8fa3b0"></i>other
 </div>
 <aside id="detail">
-  <button class="back" id="d-back">&larr; back to map</button>
+  <button class="back" id="d-back">&lt;- back to map</button>
   <h2 id="d-name"></h2>
   <div class="sub" id="d-sub"></div>
   <div id="d-photo"></div>
@@ -99,7 +99,7 @@ const map = new maplibregl.Map({
         type: "raster",
         tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
         tileSize: 256,
-        attribution: "&copy; OpenStreetMap contributors &copy; CARTO &middot; seamarks &copy; OpenSeaMap",
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO - seamarks &copy; OpenSeaMap",
       },
       seamark: {
         type: "raster",
@@ -216,7 +216,7 @@ function loadPhoto(box, mmsi, imo) {
       credit.href = ph.page_url;
       credit.target = "_blank";
       credit.rel = "noopener";
-      credit.textContent = "photo · Wikimedia Commons";
+      credit.textContent = "photo - Wikimedia Commons";
       credit.className = "credit";
       box.replaceChildren(img, credit);
     })
@@ -259,12 +259,12 @@ for (const layer of ["vessels", "vessels-moving"]) {
       .setLngLat(e.features[0].geometry.coordinates)
       .setHTML(
         `<b>${esc(p.name) || "unnamed"}</b><br>` +
-        `MMSI ${esc(p.mmsi)} &middot; ${kind}<br>` +
+        `MMSI ${esc(p.mmsi)} - ${kind}<br>` +
         (p.moving == 1
-          ? `${esc(p.sog)} kn, course ${Math.round(p.rot)}&deg;<br>`
+          ? `${esc(p.sog)} kn, course ${Math.round(p.rot)} deg<br>`
           : `stationary<br>`) +
-        `${esc(p.type)} &middot; ${Math.round(p.age)}s ago<br>` +
-        `<a href="#vessel/${esc(p.mmsi)}">details &rarr;</a>` +
+        `${esc(p.type)} - ${Math.round(p.age)}s ago<br>` +
+        `<a href="#vessel/${esc(p.mmsi)}">details -&gt;</a>` +
         `<div id="${photoId}"></div>`
       )
       .addTo(map);
@@ -275,7 +275,7 @@ for (const layer of ["vessels", "vessels-moving"]) {
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
 
-// ── Vessel detail panel (#vessel/<mmsi> hash route) ───────────────────────
+// -- Vessel detail panel (#vessel/<mmsi> hash route) -----------------------
 let detailMmsi = null;
 let trail = [];
 let photoKey = ""; // `${mmsi}:${imo}` of the last photo request
@@ -295,7 +295,7 @@ function renderDetail() {
   const v = seen.get(mmsi);
   document.getElementById("d-name").textContent = (v && v.name) || "unnamed";
   const kind = v ? CAT_NAMES[typeCat(v.stype)] + (v.stype != null ? ` (type ${v.stype})` : "") : "";
-  document.getElementById("d-sub").textContent = v ? `MMSI ${mmsi} · ${kind}` : `MMSI ${mmsi}`;
+  document.getElementById("d-sub").textContent = v ? `MMSI ${mmsi} - ${kind}` : `MMSI ${mmsi}`;
 
   const table = document.getElementById("d-table");
   table.replaceChildren();
@@ -306,22 +306,22 @@ function renderDetail() {
     tr.insertCell().textContent = String(value);
   };
   if (!v) {
-    row("status", "waiting for this vessel's next broadcast…");
+    row("status", "waiting for this vessel's next broadcast...");
     return;
   }
   const info = v.info || {};
   row("IMO", v.imo || info.imoNumber);
   row("call sign", info.callsign);
-  if (info.length) row("size", `${info.length} m × ${info.beam || "?"} m`);
+  if (info.length) row("size", `${info.length} m x ${info.beam || "?"} m`);
   row("draught", info.draught ? `${info.draught} m` : null);
   row("destination", info.destination);
   row("ETA", fmtEta(info.eta));
   row("nav status", v.navStatus != null ? NAV_STATUS[v.navStatus] : null);
   row("speed", v.sog != null ? `${v.sog} kn` : null);
-  row("course", v.cog != null ? `${Math.round(v.cog)}°` : null);
-  row("heading", v.heading != null ? `${v.heading}°` : null);
+  row("course", v.cog != null ? `${Math.round(v.cog)} deg` : null);
+  row("heading", v.heading != null ? `${v.heading} deg` : null);
   row("position", `${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}`);
-  row("last message", `${v.type} · ${Math.round((Date.now() - v.t) / 1000)}s ago`);
+  row("last message", `${v.type} - ${Math.round((Date.now() - v.t) / 1000)}s ago`);
 
   // (Re)load the photo when the identity we can search with changes - e.g.
   // the IMO arriving with the ship's next statics unlocks a better lookup.
@@ -419,7 +419,7 @@ window.addEventListener("hashchange", route);
 // The map is a public window onto the network - viewers need no API key
 // (fanout's anonymous tier). Keys are for API consumers and are created on
 // the control plane. Anonymous viewing is capped to the free-tier area
-// (30000 deg²); this box sits just under it and covers every major shipping
+// (30000 square degrees); this box sits just under it and covers every major shipping
 // lane in the northern hemisphere plus the equatorial routes - i.e. all of
 // aisstream's global picture except the far south.
 const VIEW_BBOX = [[[-11, -180], [72, 180]]];
@@ -429,7 +429,7 @@ function connect() {
   const status = document.getElementById("status");
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${scheme}://${location.host}/v1/stream`);
-  status.textContent = "connecting…";
+  status.textContent = "connecting...";
   ws.onopen = () => {
     status.textContent = "streaming";
     ws.send(JSON.stringify({ BoundingBoxes: VIEW_BBOX }));
@@ -481,7 +481,7 @@ function connect() {
       renderDetail();
     }
   };
-  ws.onclose = () => { status.textContent = "disconnected — retrying in 3s"; setTimeout(connect, 3000); };
+  ws.onclose = () => { status.textContent = "disconnected - retrying in 3s"; setTimeout(connect, 3000); };
 }
 document.getElementById("go").onclick = connect;
 connect();

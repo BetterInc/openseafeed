@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenSeaFeed — the open AIS network</title>
+<title>OpenSeaFeed - the open AIS network</title>
 <meta name="description" content="A community-owned AIS network: live vessel positions, open history, and free API keys. Contribute a receiver or feed and unlock the full firehose.">
 <style>
   :root { color-scheme: dark; }
@@ -56,7 +56,7 @@
   <div class="hero">
     <h2>The open, community-owned AIS network.</h2>
     <p>Live vessel positions from public national feeds and community receivers, merged,
-       deduplicated and streamed back out — free to watch, free to build on, and owned by
+       deduplicated and streamed back out - free to watch, free to build on, and owned by
        the people who feed it. Apache-2.0, no lock-in, history included.</p>
   </div>
   <div class="cta">
@@ -72,7 +72,7 @@
         <p>aisstream.io-compatible WebSocket of decoded AIS, enriched with names, ship types
            and IMO numbers. No key needed inside the free-tier area.</p></div>
       <div class="card"><b>Fleet snapshot</b>
-        <p>The whole fleet's current state as one cacheable request — positions, names,
+        <p>The whole fleet's current state as one cacheable request - positions, names,
            particulars.</p></div>
       <div class="card"><b>History</b>
         <p>Every position is archived. Anonymous access covers the recent past;
@@ -88,30 +88,30 @@
     <ol>
       <li>Sign in at <a href="https://api.openseafeed.com/">api.openseafeed.com</a> with GitHub
           or an email sign-in link.</li>
-      <li>Create a key on the dashboard — <code>osf_live_…</code> to consume,
-          <code>osf_feed_…</code> to contribute.</li>
+      <li>Create a key on the dashboard - <code>osf_live_...</code> to consume,
+          <code>osf_feed_...</code> to contribute.</li>
       <li>Connect:</li>
     </ol>
     <pre>// stream vessels over WebSocket (aisstream.io-compatible)
 const ws = new WebSocket("wss://stream.openseafeed.com/v1/stream");
 ws.onopen = () => ws.send(JSON.stringify({
-  APIKey: "osf_live_…",                       // optional: omit for the free tier
+  APIKey: "osf_live_...",                       // optional: omit for the free tier
   BoundingBoxes: [[[54, -5], [72, 32]]],
 }));
 ws.onmessage = (e) => console.log(JSON.parse(e.data));</pre>
     <pre># contribute NMEA from your receiver (TCP, one AUTH line first)
-( echo "AUTH osf_feed_…"; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111</pre>
+( echo "AUTH osf_feed_..."; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111</pre>
   </section>
 
   <section>
     <h3>Why open?</h3>
-    <p>AIS is broadcast in the clear by ships, for safety — yet most of it ends up behind
+    <p>AIS is broadcast in the clear by ships, for safety - yet most of it ends up behind
        paywalls. OpenSeaFeed keeps the pipeline public: open source, open data, open history,
-       and a tier model with exactly one rule — those who give data get the most back.</p>
+       and a tier model with exactly one rule - those who give data get the most back.</p>
   </section>
 </main>
 <footer>
-  <span>Apache-2.0 · <a href="https://github.com/BetterInc/openseafeed">source</a></span>
+  <span>Apache-2.0 - <a href="https://github.com/BetterInc/openseafeed">source</a></span>
   <span><a href="https://stream.openseafeed.com/">live map</a></span>
   <span><a href="/docs.html">API docs</a></span>
   <span><a href="https://api.openseafeed.com/">dashboard</a></span>

@@ -9,7 +9,7 @@
 //! Re-sending a subscription on the same socket swaps it in place.
 //!
 //! Routing: each client's bounding boxes are covered by geohash prefixes and
-//! turned into NATS subscriptions on `ais.decoded.<c>.<c>…`; precise
+//! turned into NATS subscriptions on `ais.decoded.<c>.<c>...`; precise
 //! filtering then uses the message headers only (no JSON parsing on the hot
 //! path).
 
@@ -28,7 +28,7 @@ use openseafeed_geo::BBox;
 use openseafeed_keys::Validator;
 use serde::Deserialize;
 
-/// Geohash precision used for subject covers: 3 chars ≈ 1.4° cells, a good
+/// Geohash precision used for subject covers: 3 chars ≈ 1.4 deg cells, a good
 /// balance between subscription count and over-delivery filtered locally.
 const COVER_PRECISION: usize = 3;
 const MAX_CELLS_PER_CLIENT: usize = 48;
@@ -213,7 +213,7 @@ async fn apply_subscription(
     let filter = ClientFilter::from_subscription(&sub).map_err(str::to_string)?;
     if tier != "contributor" && filter.total_area() > FREE_TIER_MAX_AREA {
         return Err(format!(
-            "free tier is limited to {FREE_TIER_MAX_AREA} deg² of bounding-box area; \
+            "free tier is limited to {FREE_TIER_MAX_AREA} square degrees of bounding-box area; \
              contribute a receiver or feed to unlock unlimited streaming"
         ));
     }

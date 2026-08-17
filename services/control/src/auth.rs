@@ -329,7 +329,7 @@ pub struct MagicRequest {
     email: String,
 }
 
-/// `POST /auth/magic` — issue a single-use sign-in link. Without an SMTP URL
+/// `POST /auth/magic` - issue a single-use sign-in link. Without an SMTP URL
 /// configured (dev), the link is logged instead of mailed. The response is
 /// deliberately identical whether or not the address is known, so it does not
 /// leak which emails have accounts.
@@ -394,7 +394,7 @@ pub struct MagicVerifyQuery {
     token: String,
 }
 
-/// `GET /auth/magic/verify?token=...` — consume a token and start a session.
+/// `GET /auth/magic/verify?token=...` - consume a token and start a session.
 pub async fn magic_verify(
     State(state): State<AppState>,
     Query(q): Query<MagicVerifyQuery>,
@@ -425,7 +425,7 @@ pub async fn magic_verify(
     finish_login(&state, &user.id)
 }
 
-/// `POST /auth/logout` — clear the session cookie.
+/// `POST /auth/logout` - clear the session cookie.
 pub async fn logout() -> Response {
     (
         [(header::SET_COOKIE, session::clear_cookie_header())],

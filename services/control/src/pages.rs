@@ -1,5 +1,5 @@
 //! Minimal server-rendered HTML: a landing page with sign-in options and a
-//! dashboard for managing keys and stations. No framework, no build step —
+//! dashboard for managing keys and stations. No framework, no build step -
 //! inline strings and a sprinkle of vanilla `fetch` against the `/v1` API.
 
 use axum::extract::State;
@@ -27,7 +27,7 @@ const STYLE: &str = r#"
 </style>
 "#;
 
-/// `GET /` — landing page. Shows only the sign-in methods this server has
+/// `GET /` - landing page. Shows only the sign-in methods this server has
 /// configured, plus the always-available magic-link form.
 pub async fn landing(State(state): State<AppState>) -> Html<String> {
     let mut providers = String::new();
@@ -51,8 +51,8 @@ pub async fn landing(State(state): State<AppState>) -> Html<String> {
 <body>
   <h1>OpenSeaFeed</h1>
   <p class="muted">An open community AIS network. Sign in to manage API keys and register stations.</p>
-  <p><a href="https://openseafeed.com/docs.html">API docs</a> &middot;
-     <a href="https://stream.openseafeed.com/">live map</a> &middot;
+  <p><a href="https://openseafeed.com/docs.html">API docs</a> -
+     <a href="https://stream.openseafeed.com/">live map</a> -
      <a href="https://openseafeed.com/">about</a></p>
 
   <h2>Sign in</h2>
@@ -82,7 +82,7 @@ document.getElementById('magic').addEventListener('submit', async (e) => {{
     Html(body)
 }
 
-/// `GET /dashboard` — requires a session. Renders the user's keys and stations
+/// `GET /dashboard` - requires a session. Renders the user's keys and stations
 /// and small forms that call the `/v1` API and reload.
 pub async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let user = match state.current_user(&headers).await {
@@ -136,14 +136,14 @@ pub async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Res
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenSeaFeed — Dashboard</title>{STYLE}</head>
+<title>OpenSeaFeed - Dashboard</title>{STYLE}</head>
 <body>
   <h1>Dashboard</h1>
-  <p class="muted">Signed in as <strong>{who}</strong> — tier: <strong>{tier}</strong>
+  <p class="muted">Signed in as <strong>{who}</strong> - tier: <strong>{tier}</strong>
     &nbsp; <form class="inline" style="display:inline" method="post" action="/auth/logout">
     <button class="btn" type="submit">Log out</button></form></p>
-  <p><a href="https://openseafeed.com/docs.html">API docs</a> &middot;
-     <a href="https://stream.openseafeed.com/">live map</a> &middot;
+  <p><a href="https://openseafeed.com/docs.html">API docs</a> -
+     <a href="https://stream.openseafeed.com/">live map</a> -
      <a href="https://openseafeed.com/">about</a></p>
 
   <h2>API keys</h2>

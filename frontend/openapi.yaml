@@ -15,12 +15,12 @@ info:
 
     | kind | prefix | purpose |
     |---|---|---|
-    | live | `osf_live_…` | consuming: stream, snapshot, history |
-    | feed | `osf_feed_…` | contributing an upstream feed |
-    | station | `osf_stn_…` | contributing your own receiver (via station registration) |
+    | live | `osf_live_...` | consuming: stream, snapshot, history |
+    | feed | `osf_feed_...` | contributing an upstream feed |
+    | station | `osf_stn_...` | contributing your own receiver (via station registration) |
 
     **Anonymous access is welcome** at the free tier: no key needed for the
-    stream (bounding boxes up to 30000 deg² of area), single-vessel state,
+    stream (bounding boxes up to 30000 square degrees of area), single-vessel state,
     recent history (last 48 h, downsampled) and the delayed fleet snapshot.
     Accounts that actively contribute a feed or receiver get the
     `contributor` tier: unlimited stream area, the freshest snapshot, and
@@ -34,7 +34,7 @@ info:
 
     ```json
     {
-      "APIKey": "osf_live_…",
+      "APIKey": "osf_live_...",
       "BoundingBoxes": [[[54, -5], [72, 32]]],
       "FiltersShipMMSI": ["257970000"],
       "FilterMessageTypes": ["PositionReport"]
@@ -53,7 +53,7 @@ info:
         "latitude": 59.48, "longitude": 21.39,
         "time_utc": "2026-08-17T10:00:00Z"
       },
-      "Message": { "PositionReport": { "Sog": 12.8, "Cog": 82.2, "...": "…" } }
+      "Message": { "PositionReport": { "Sog": 12.8, "Cog": 82.2, "...": "..." } }
     }
     ```
 
@@ -62,18 +62,18 @@ info:
 
     ## Sending data: contributing a feed or receiver
 
-    Create an `osf_feed_…` key (or register a station for `osf_stn_…`), then
+    Create an `osf_feed_...` key (or register a station for `osf_stn_...`), then
     push raw NMEA (AIVDM/AIVDO sentences) one of two ways:
 
-    **TCP** — connect to `ingest.openseafeed.com:10111`, send one line
-    `AUTH osf_feed_…`, then stream NMEA lines:
+    **TCP** - connect to `ingest.openseafeed.com:10111`, send one line
+    `AUTH osf_feed_...`, then stream NMEA lines:
 
     ```
-    ( echo "AUTH osf_feed_…"; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111
+    ( echo "AUTH osf_feed_..."; cat /dev/ttyUSB0 ) | nc ingest.openseafeed.com 10111
     ```
 
-    **WebSocket** — connect to `wss://ingest.openseafeed.com/v1/ingest?key=osf_feed_…`
-    (or send the key as `Authorization: Bearer …`) and send NMEA lines as text
+    **WebSocket** - connect to `wss://ingest.openseafeed.com/v1/ingest?key=osf_feed_...`
+    (or send the key as `Authorization: Bearer ...`) and send NMEA lines as text
     frames. Ideal for AIS-catcher or browser/edge contributors.
 
     Multi-sentence messages are reassembled server-side; invalid lines are
@@ -96,7 +96,7 @@ components:
       type: apiKey
       in: query
       name: key
-      description: An `osf_live_…` key. Omit entirely for anonymous free-tier access.
+      description: An `osf_live_...` key. Omit entirely for anonymous free-tier access.
     sessionCookie:
       type: apiKey
       in: cookie
@@ -190,12 +190,12 @@ paths:
       summary: Position history of one vessel
       description: |
         Stored track from the archive. Anonymous requests are clamped to the
-        last 48 hours and always downsampled (step ≥ 30 s); a valid key
+        last 48 hours and always downsampled (step >= 30 s); a valid key
         unlocks the full range (five-year design horizon).
       security: [{}, { apiKey: [] }]
       parameters:
         - { name: mmsi, in: path, required: true, schema: { type: integer } }
-        - { name: from, in: query, schema: { type: string, format: date-time }, description: "Default: to − 24 h" }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: "Default: to - 24 h" }
         - { name: to, in: query, schema: { type: string, format: date-time }, description: "Default: now" }
         - { name: step, in: query, schema: { type: integer, minimum: 10 }, description: Downsample to one point per step seconds
           }
@@ -223,7 +223,7 @@ paths:
       description: |
         Wikimedia Commons photo lookup (Wikidata, IMO-first), cached
         server-side. Attribution via `page_url` is required when displaying
-        the image. Coverage is honest-but-thin — famous ships, ferries and
+        the image. Coverage is honest-but-thin - famous ships, ferries and
         large cargo mostly.
       parameters:
         - { name: mmsi, in: path, required: true, schema: { type: integer } }
@@ -267,7 +267,7 @@ paths:
                 label: { type: string }
       responses:
         "201":
-          description: The new key (shown once — store it)
+          description: The new key (shown once - store it)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiKey" }
@@ -294,7 +294,7 @@ paths:
     post:
       tags: [account]
       summary: Register a receiver station
-      description: Returns the station's `osf_stn_…` key. A station seen in the last 7 days makes you a contributor.
+      description: Returns the station's `osf_stn_...` key. A station seen in the last 7 days makes you a contributor.
       security: [{ sessionCookie: [] }]
       requestBody:
         required: true
