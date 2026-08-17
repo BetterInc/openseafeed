@@ -109,6 +109,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(consume(nats, app.clone()));
+    // Rebuild the fleet from stored history so a restart (every deploy) does
+    // not blank the map and 404 shared vessel links until ships re-transmit.
+    tokio::spawn(warm_from_history(app.clone()));
     let interval: u64 = std::env::var("OSF_SNAPSHOT_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -129,6 +132,145 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+/// One ClickHouse HTTP query, NDJSON out. Same env contract as the archiver.
+async fn ch_query(sql: String) -> anyhow::Result<String> {
+    let url =
+        std::env::var("OSF_CLICKHOUSE_URL").unwrap_or_else(|_| "http://clickhouse:8123".into());
+    let mut req = reqwest::Client::new().post(&url).body(sql);
+    if let Ok(u) = std::env::var("OSF_CLICKHOUSE_USER") {
+        req = req.header("X-ClickHouse-User", u);
+    }
+    if let Ok(p) = std::env::var("OSF_CLICKHOUSE_PASSWORD") {
+        req = req.header("X-ClickHouse-Key", p);
+    }
+    let resp = req
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(resp.text().await?)
+}
+
+#[derive(serde::Deserialize)]
+struct WarmPos {
+    mmsi: u32,
+    lat: f64,
+    lon: f64,
+    sog: Option<f64>,
+    cog: Option<f64>,
+    hdg: Option<u16>,
+    nav: Option<u8>,
+    ts: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct WarmStatic {
+    mmsi: u32,
+    name: String,
+    callsign: String,
+    imo: u32,
+    ship_type: u8,
+    dest: String,
+    draught: f64,
+    a: u16,
+    b: u16,
+    c: u16,
+    d: u16,
+}
+
+/// Rebuild fleet state from the archiver's ClickHouse history: last 24h of
+/// positions plus the per-vessel statics. Live messages that arrived while
+/// the queries ran win over the warm data.
+async fn warm_from_history(app: Arc<App>) {
+    let db = std::env::var("OSF_CLICKHOUSE_DB").unwrap_or_else(|_| "osf".into());
+
+    let positions = ch_query(format!(
+        "SELECT mmsi, argMax(lat, ts) AS lat, argMax(lon, ts) AS lon, \
+                argMax(sog, ts) AS sog, argMax(cog, ts) AS cog, \
+                argMax(heading, ts) AS hdg, argMax(nav_status, ts) AS nav, \
+                toUnixTimestamp64Milli(max(ts)) AS ts \
+         FROM {db}.positions WHERE ts > now() - INTERVAL 24 HOUR \
+         GROUP BY mmsi FORMAT JSONEachRow"
+    ))
+    .await;
+    let statics = ch_query(format!(
+        "SELECT mmsi, argMax(name, ts) AS name, argMax(call_sign, ts) AS callsign, \
+                argMax(imo, ts) AS imo, argMax(ship_type, ts) AS ship_type, \
+                argMax(destination, ts) AS dest, argMax(draught, ts) AS draught, \
+                argMax(dim_a, ts) AS a, argMax(dim_b, ts) AS b, \
+                argMax(dim_c, ts) AS c, argMax(dim_d, ts) AS d \
+         FROM {db}.statics GROUP BY mmsi FORMAT JSONEachRow"
+    ))
+    .await;
+
+    let (mut warmed_pos, mut warmed_stat) = (0usize, 0usize);
+    match positions {
+        Ok(text) => {
+            let mut st = app.state.write().await;
+            for line in text.lines() {
+                let Ok(w) = serde_json::from_str::<WarmPos>(line) else {
+                    continue;
+                };
+                if !(-90.0..=90.0).contains(&w.lat) || !(-180.0..=180.0).contains(&w.lon) {
+                    continue;
+                }
+                let v = st.vessels.entry(w.mmsi).or_default();
+                if v.ts >= w.ts {
+                    continue; // live consume already has fresher data
+                }
+                v.mmsi = w.mmsi;
+                v.lat = Some(w.lat);
+                v.lon = Some(w.lon);
+                v.sog = w.sog.filter(|s| *s < 102.3);
+                v.cog = w.cog.filter(|c| *c < 360.0);
+                v.hdg = w.hdg.filter(|h| *h < 511);
+                v.nav = w.nav;
+                v.ts = w.ts;
+                warmed_pos += 1;
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "position warm-up unavailable"),
+    }
+    match statics {
+        Ok(text) => {
+            let mut st = app.state.write().await;
+            for line in text.lines() {
+                let Ok(w) = serde_json::from_str::<WarmStatic>(line) else {
+                    continue;
+                };
+                let Some(v) = st.vessels.get_mut(&w.mmsi) else {
+                    continue; // statics only enrich ships with a position
+                };
+                if v.name.is_empty() && !w.name.is_empty() {
+                    v.name = w.name;
+                }
+                if v.callsign.is_empty() {
+                    v.callsign = w.callsign;
+                }
+                if v.dest.is_empty() {
+                    v.dest = w.dest;
+                }
+                if v.ship_type.is_none() && w.ship_type > 0 {
+                    v.ship_type = Some(w.ship_type);
+                }
+                if v.imo.is_none() && w.imo > 0 {
+                    v.imo = Some(w.imo);
+                }
+                if v.draught.is_none() && w.draught > 0.0 {
+                    v.draught = Some(w.draught);
+                }
+                if v.len.is_none() && w.a + w.b > 0 {
+                    v.len = Some(w.a + w.b);
+                    v.beam = Some(w.c + w.d);
+                }
+                warmed_stat += 1;
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "statics warm-up unavailable"),
+    }
+    tracing::info!(warmed_pos, warmed_stat, "fleet warmed from history");
 }
 
 async fn consume(nats: async_nats::Client, app: Arc<App>) {

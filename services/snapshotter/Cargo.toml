@@ -12,6 +12,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 async-nats.workspace = true
 axum.workspace = true
 futures.workspace = true
