@@ -20,6 +20,11 @@ const GEOHASH_PRECISION: usize = 4;
 /// Bound both enrichment caches; ~400k active MMSIs globally.
 const CACHE_CAP: usize = 1_000_000;
 
+/// JetStream KV bucket persisting MMSI -> name across restarts. Without it
+/// every deploy wiped the cache and the map went "unnamed" until each ship
+/// re-broadcast its statics (type 5 / 24A, a ~6-minute cycle per vessel).
+const NAMES_BUCKET: &str = "vessel-names";
+
 #[derive(Default)]
 struct Stats {
     received: u64,
@@ -66,11 +71,27 @@ async fn main() -> anyhow::Result<()> {
         .queue_subscribe(subjects::RAW_ALL, "pipeline".into())
         .await?;
 
+    let js = async_nats::jetstream::new(client.clone());
+    let names_kv = match js.get_key_value(NAMES_BUCKET).await {
+        Ok(kv) => kv,
+        Err(_) => {
+            js.create_key_value(async_nats::jetstream::kv::Config {
+                bucket: NAMES_BUCKET.to_string(),
+                description: "MMSI -> last seen vessel name".to_string(),
+                history: 1,
+                ..Default::default()
+            })
+            .await?
+        }
+    };
+
     let mut window = dedupe::Window::new(Duration::from_secs(10));
     let mut enrich = Enrichment {
         names: HashMap::new(),
         last_pos: HashMap::new(),
     };
+    warm_names(&names_kv, &mut enrich.names).await;
+    tracing::info!(names = enrich.names.len(), "name cache warmed from KV");
     let mut stats = Stats::default();
     let mut last_report = Instant::now();
 
@@ -81,7 +102,16 @@ async fn main() -> anyhow::Result<()> {
         };
         stats.received += 1;
 
-        if let Err(e) = handle(&client, &msg.payload, &mut window, &mut enrich, &mut stats).await {
+        if let Err(e) = handle(
+            &client,
+            &names_kv,
+            &msg.payload,
+            &mut window,
+            &mut enrich,
+            &mut stats,
+        )
+        .await
+        {
             stats.decode_errors += 1;
             tracing::debug!(error = %e, "message dropped");
         }
@@ -104,8 +134,43 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Load every current entry from the names bucket into the in-memory cache.
+/// Entries stream oldest-first and `delta` is the distance to the newest, so
+/// 0 means caught up. An empty bucket yields nothing, hence the timeout.
+async fn warm_names(kv: &async_nats::jetstream::kv::Store, names: &mut HashMap<u32, String>) {
+    let mut watch = match kv.watch_all_from_revision(1).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(error = %e, "name cache warm-up unavailable");
+            return;
+        }
+    };
+    let load = async {
+        while let Some(entry) = watch.next().await {
+            let Ok(entry) = entry else { break };
+            if entry.operation == async_nats::jetstream::kv::Operation::Put {
+                if let (Ok(mmsi), Ok(name)) =
+                    (entry.key.parse::<u32>(), std::str::from_utf8(&entry.value))
+                {
+                    names.insert(mmsi, name.to_string());
+                }
+            }
+            if entry.delta == 0 {
+                break;
+            }
+        }
+    };
+    if tokio::time::timeout(Duration::from_secs(10), load)
+        .await
+        .is_err()
+    {
+        tracing::warn!("name cache warm-up timed out; continuing with what loaded");
+    }
+}
+
 async fn handle(
     client: &async_nats::Client,
+    names_kv: &async_nats::jetstream::kv::Store,
     payload: &[u8],
     window: &mut dedupe::Window,
     enrich: &mut Enrichment,
@@ -124,9 +189,18 @@ async fn handle(
     }
     stats.decoded += 1;
 
-    // Update enrichment caches.
+    // Update enrichment caches; persist new/changed names so they survive
+    // restarts. A lost write self-heals on the vessel's next static broadcast.
     if let Some(name) = &msg.name {
-        enrich.names.insert(msg.mmsi, name.clone());
+        if enrich.names.get(&msg.mmsi) != Some(name) {
+            enrich.names.insert(msg.mmsi, name.clone());
+            if let Err(e) = names_kv
+                .put(msg.mmsi.to_string(), name.clone().into_bytes().into())
+                .await
+            {
+                tracing::debug!(error = %e, mmsi = msg.mmsi, "name persist failed");
+            }
+        }
     }
     let cell_and_pos = match msg.position {
         Some((lat, lon)) => {
