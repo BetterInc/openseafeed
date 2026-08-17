@@ -55,6 +55,7 @@ const STYLE: &str = r#"
 const NAV: &str = r#"<header class="site"><h1>OPENSEAFEED</h1><nav>
   <a href="https://stream.openseafeed.com/">Live map</a>
   <a href="https://openseafeed.com/docs.html">API docs</a>
+  <a href="https://openseafeed.com/account.html">Account</a>
   <a href="https://openseafeed.com/">About</a>
 </nav></header>"#;
 

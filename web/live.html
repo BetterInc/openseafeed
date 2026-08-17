@@ -46,6 +46,17 @@
                   background: none; border: none; padding: 0; font: inherit; }
   #detail .back:hover { text-decoration: underline; }
   #detail .credit { font-size: 11px; color: #7f9ab0; }
+  #pagenav { display: flex; gap: 1rem; font-size: .9rem; }
+  #pagenav a { color: #7f9ab0; text-decoration: none; }
+  #pagenav a:hover { color: #7fd4a8; }
+  #searchwrap { position: relative; }
+  #search { width: 15rem; }
+  #results { position: absolute; top: 2.2rem; left: 0; right: 0; background: #0e1b2a;
+             border: 1px solid #24455f; border-radius: 6px; z-index: 20;
+             max-height: 300px; overflow-y: auto; display: none; }
+  #results div { padding: .35rem .6rem; cursor: pointer; font-size: .9rem; }
+  #results div:hover { background: #16283a; }
+  #results .m { color: #7f9ab0; }
   #legend { position: absolute; bottom: 2.2rem; left: .75rem; z-index: 5;
             background: rgba(11,20,32,.85); border: 1px solid #1d3242; border-radius: 6px;
             padding: .5rem .75rem; color: #7f9ab0; font-size: 12px; }
@@ -56,11 +67,20 @@
 <body>
 <header>
   <h1>OPENSEAFEED LIVE</h1>
+  <nav id="pagenav">
+    <a href="https://openseafeed.com/">home</a>
+    <a href="https://openseafeed.com/docs.html">docs</a>
+    <a href="https://openseafeed.com/account.html">account</a>
+  </nav>
   <div class="stat"><b id="rate">0</b> <span>msg/s</span></div>
   <div class="stat"><b id="total">0</b> <span>messages</span></div>
   <div class="stat"><b id="vessels">0</b> <span>vessels seen</span></div>
   <div class="stat"><span id="status">disconnected</span></div>
   <div id="controls">
+    <span id="searchwrap">
+      <input type="text" id="search" placeholder="search name or MMSI" autocomplete="off">
+      <div id="results"></div>
+    </span>
     <label><input type="checkbox" id="seamarks"> seamarks</label>
     <button id="go">connect</button>
   </div>
@@ -483,6 +503,48 @@ function connect() {
   };
   ws.onclose = () => { status.textContent = "disconnected - retrying in 3s"; setTimeout(connect, 3000); };
 }
+// -- Search: name substring or MMSI prefix over everything seen so far. ----
+const searchEl = document.getElementById("search");
+const resultsEl = document.getElementById("results");
+let searchTimer = null;
+searchEl.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 150);
+});
+searchEl.addEventListener("blur", () => setTimeout(() => { resultsEl.style.display = "none"; }, 200));
+searchEl.addEventListener("focus", runSearch);
+function runSearch() {
+  const q = searchEl.value.trim().toUpperCase();
+  resultsEl.replaceChildren();
+  if (q.length < 2) { resultsEl.style.display = "none"; return; }
+  const out = [];
+  for (const [mmsi, v] of seen) {
+    if (String(mmsi).startsWith(q) || (v.name || "").toUpperCase().includes(q)) {
+      out.push([mmsi, v]);
+      if (out.length >= 12) break;
+    }
+  }
+  // Unknown here but a plausible MMSI: offer it anyway - the detail panel
+  // seeds from the server-side snapshot, which knows more than this tab.
+  if (!out.length && /^\d{7,9}$/.test(q)) out.push([Number(q), null]);
+  for (const [mmsi, v] of out) {
+    const d = document.createElement("div");
+    if (v && v.name) d.append(v.name + " ");
+    const m = document.createElement("span");
+    m.className = "m";
+    m.textContent = (v && v.name ? "" : "MMSI ") + mmsi
+      + (v ? " - " + CAT_NAMES[typeCat(v.stype)] : " (look up)");
+    d.append(m);
+    d.onmousedown = () => {
+      location.hash = "vessel/" + mmsi;
+      searchEl.value = "";
+      resultsEl.style.display = "none";
+    };
+    resultsEl.append(d);
+  }
+  resultsEl.style.display = out.length ? "block" : "none";
+}
+
 document.getElementById("go").onclick = connect;
 connect();
 route(); // honor a #vessel/<mmsi> deep link on load

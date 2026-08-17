@@ -22,7 +22,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -50,6 +52,10 @@ pub struct Config {
     pub google: Option<OAuthProvider>,
     pub smtp_url: Option<String>,
     pub smtp_from: String,
+    /// Origins allowed to call the session API cross-origin with credentials
+    /// (the openseafeed.com account page). Same-site subdomains, so the
+    /// SameSite=Lax session cookie rides along.
+    pub cors_origins: Vec<String>,
 }
 
 fn provider_from_env(id_var: &str, secret_var: &str) -> Option<OAuthProvider> {
@@ -105,6 +111,18 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "OpenSeaFeed <no-reply@openseafeed.com>".to_string()),
+            cors_origins: std::env::var("OSF_CORS_ORIGINS")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    "https://openseafeed.com,https://www.openseafeed.com,\
+                     https://stream.openseafeed.com"
+                        .to_string()
+                })
+                .split(',')
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 
@@ -124,6 +142,7 @@ impl Config {
             google: None,
             smtp_url: None,
             smtp_from: "OpenSeaFeed <no-reply@openseafeed.com>".to_string(),
+            cors_origins: vec!["https://test.example".to_string()],
         }
     }
 }
@@ -174,6 +193,66 @@ pub fn json_error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
+/// CORS-with-credentials for the allowlisted first-party origins, so the
+/// openseafeed.com account page can drive the session API cross-origin.
+/// Unknown origins get no CORS headers at all (per-handler `*` responses,
+/// like the public photo endpoint, are left untouched for them).
+async fn cors(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let allowed = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .filter(|o| state.cfg.cors_origins.iter().any(|a| a == o))
+        .and_then(|o| o.parse::<axum::http::HeaderValue>().ok());
+
+    if req.method() == Method::OPTIONS {
+        let mut resp = StatusCode::NO_CONTENT.into_response();
+        if let Some(origin) = allowed {
+            let h = resp.headers_mut();
+            h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                header::HeaderValue::from_static("true"),
+            );
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_METHODS,
+                header::HeaderValue::from_static("GET, POST, DELETE"),
+            );
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                header::HeaderValue::from_static("content-type"),
+            );
+            h.insert(
+                header::ACCESS_CONTROL_MAX_AGE,
+                header::HeaderValue::from_static("86400"),
+            );
+        }
+        return resp;
+    }
+
+    let mut resp = next.run(req).await;
+    if let Some(origin) = allowed {
+        let h = resp.headers_mut();
+        h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            header::HeaderValue::from_static("true"),
+        );
+        h.append(header::VARY, header::HeaderValue::from_static("Origin"));
+    }
+    resp
+}
+
+/// `GET /v1/auth/providers` - which sign-in methods this server offers, so
+/// the account page renders only working buttons.
+async fn auth_providers(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "github": state.cfg.github.is_some(),
+        "google": state.cfg.google.is_some(),
+        "magic": true,
+    }))
+}
+
 /// Assemble the full router. Kept public so integration tests exercise the
 /// exact routes the server serves.
 pub fn router(state: AppState) -> Router {
@@ -200,9 +279,11 @@ pub fn router(state: AppState) -> Router {
         // Public, CORS-open vessel enrichment used by the live map. NOT under
         // /v1/vessels: the api ingress routes that prefix to the snapshotter.
         .route("/v1/photos/{mmsi}", get(api::vessel_photo))
+        .route("/v1/auth/providers", get(auth_providers))
         // Internal (shared-secret) API
         .route("/v1/internal/keys/validate", get(internal::validate_key))
         .route("/v1/internal/stations/heartbeat", post(internal::heartbeat))
+        .layer(middleware::from_fn_with_state(state.clone(), cors))
         .with_state(state)
 }
 

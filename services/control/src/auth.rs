@@ -20,6 +20,39 @@ use serde::Deserialize;
 use crate::{db, json_error, session, AppState, OAuthProvider};
 
 const STATE_COOKIE: &str = "osf_oauth_state";
+const NEXT_COOKIE: &str = "osf_next";
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
+    for pair in cookie.split(';') {
+        if let Some(rest) = pair.trim().strip_prefix(&format!("{name}=")) {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Validate a post-login return URL: relative paths, or absolute URLs on an
+/// allowlisted first-party origin (the account page on openseafeed.com).
+/// Everything else falls back to the built-in dashboard.
+fn safe_next(state: &AppState, next: Option<&str>) -> Option<String> {
+    let n = next?.trim();
+    if n.starts_with('/') && !n.starts_with("//") {
+        return Some(n.to_string());
+    }
+    state
+        .cfg
+        .cors_origins
+        .iter()
+        .any(|o| n == o || n.starts_with(&format!("{o}/")))
+        .then(|| n.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct StartQuery {
+    #[serde(default)]
+    next: Option<String>,
+}
 
 fn random_state() -> String {
     let mut buf = [0u8; 16];
@@ -47,11 +80,25 @@ fn redirect_uri(state: &AppState, provider: &str) -> String {
 }
 
 /// Redirect to a provider's authorize endpoint, planting the CSRF state
-/// cookie on the way out.
-fn start_redirect(authorize_url: String, state_value: &str) -> Response {
-    let cookie =
+/// cookie (and the validated post-login return URL) on the way out.
+fn start_redirect(authorize_url: String, state_value: &str, next: Option<String>) -> Response {
+    let state_cookie =
         format!("{STATE_COOKIE}={state_value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600");
-    ([(header::SET_COOKIE, cookie)], Redirect::to(&authorize_url)).into_response()
+    let next_cookie = match next {
+        Some(n) => format!(
+            "{NEXT_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600",
+            urlencoding::encode(&n)
+        ),
+        None => format!("{NEXT_COOKIE}=; Path=/; HttpOnly; Max-Age=0"),
+    };
+    (
+        AppendHeaders([
+            (header::SET_COOKIE, state_cookie),
+            (header::SET_COOKIE, next_cookie),
+        ]),
+        Redirect::to(&authorize_url),
+    )
+        .into_response()
 }
 
 /// Read back the CSRF state cookie and confirm it matches what the provider
@@ -69,26 +116,36 @@ fn check_state(headers: &HeaderMap, returned: &str) -> bool {
     expected == Some(returned) && !returned.is_empty()
 }
 
-/// Complete sign-in: set the session cookie, clear the CSRF cookie, redirect
-/// to the dashboard.
-fn finish_login(state: &AppState, user_id: &str) -> Response {
+/// Complete sign-in: set the session cookie, clear the flow cookies, and
+/// redirect to the validated return URL (default: the built-in dashboard).
+fn finish_login(state: &AppState, user_id: &str, next: Option<String>) -> Response {
     let session_cookie = session::set_cookie_header(&state.cfg.session_secret, user_id);
     let clear_state = format!("{STATE_COOKIE}=; Path=/; HttpOnly; Max-Age=0");
-    // `AppendHeaders` (not a plain array) so both `Set-Cookie` lines survive;
-    // an array would insert and the second would overwrite the first.
+    let clear_next = format!("{NEXT_COOKIE}=; Path=/; HttpOnly; Max-Age=0");
+    let target = next.unwrap_or_else(|| "/dashboard".to_string());
+    // `AppendHeaders` (not a plain array) so all `Set-Cookie` lines survive;
+    // an array would insert and later ones would overwrite earlier ones.
     (
         AppendHeaders([
             (header::SET_COOKIE, session_cookie),
             (header::SET_COOKIE, clear_state),
+            (header::SET_COOKIE, clear_next),
         ]),
-        Redirect::to("/dashboard"),
+        Redirect::to(&target),
     )
         .into_response()
 }
 
+/// The validated return URL stashed by `start_redirect`, if any.
+fn next_from_cookie(state: &AppState, headers: &HeaderMap) -> Option<String> {
+    let raw = cookie_value(headers, NEXT_COOKIE)?;
+    let decoded = urlencoding::decode(&raw).ok()?;
+    safe_next(state, Some(&decoded))
+}
+
 // --- GitHub ----------------------------------------------------------------
 
-pub async fn github_start(State(state): State<AppState>) -> Response {
+pub async fn github_start(State(state): State<AppState>, Query(q): Query<StartQuery>) -> Response {
     let Some(provider) = state.cfg.github.clone() else {
         return provider_disabled("github");
     };
@@ -99,7 +156,8 @@ pub async fn github_start(State(state): State<AppState>) -> Response {
         urlencoding::encode(&redirect_uri(&state, "github")),
         csrf,
     );
-    start_redirect(url, &csrf)
+    let next = safe_next(&state, q.next.as_deref());
+    start_redirect(url, &csrf, next)
 }
 
 #[derive(Deserialize)]
@@ -126,7 +184,10 @@ pub async fn github_callback(
     }
 
     match github_exchange(&state, &provider, &q.code).await {
-        Ok(user) => finish_login(&state, &user.id),
+        Ok(user) => {
+            let next = next_from_cookie(&state, &headers);
+            finish_login(&state, &user.id, next)
+        }
         Err(err) => {
             tracing::error!(%err, "github oauth failed");
             json_error(StatusCode::BAD_GATEWAY, "github sign-in failed")
@@ -228,7 +289,7 @@ async fn github_primary_email(
 
 // --- Google ----------------------------------------------------------------
 
-pub async fn google_start(State(state): State<AppState>) -> Response {
+pub async fn google_start(State(state): State<AppState>, Query(q): Query<StartQuery>) -> Response {
     let Some(provider) = state.cfg.google.clone() else {
         return provider_disabled("google");
     };
@@ -240,7 +301,8 @@ pub async fn google_start(State(state): State<AppState>) -> Response {
         urlencoding::encode("openid email profile"),
         csrf,
     );
-    start_redirect(url, &csrf)
+    let next = safe_next(&state, q.next.as_deref());
+    start_redirect(url, &csrf, next)
 }
 
 pub async fn google_callback(
@@ -259,7 +321,10 @@ pub async fn google_callback(
     }
 
     match google_exchange(&state, &provider, &q.code).await {
-        Ok(user) => finish_login(&state, &user.id),
+        Ok(user) => {
+            let next = next_from_cookie(&state, &headers);
+            finish_login(&state, &user.id, next)
+        }
         Err(err) => {
             tracing::error!(%err, "google oauth failed");
             json_error(StatusCode::BAD_GATEWAY, "google sign-in failed")
@@ -327,6 +392,10 @@ const MAGIC_TTL_MINUTES: i64 = 15;
 #[derive(Deserialize)]
 pub struct MagicRequest {
     email: String,
+    /// Optional post-login return URL, validated against the first-party
+    /// allowlist before it is embedded in the sign-in link.
+    #[serde(default)]
+    next: Option<String>,
 }
 
 /// `POST /auth/magic` - issue a single-use sign-in link. Without an SMTP URL
@@ -353,11 +422,14 @@ pub async fn magic_request(
         }
     };
 
-    let link = format!(
+    let mut link = format!(
         "{}/auth/magic/verify?token={}",
         state.cfg.public_url.trim_end_matches('/'),
         token
     );
+    if let Some(next) = safe_next(&state, req.next.as_deref()) {
+        link.push_str(&format!("&next={}", urlencoding::encode(&next)));
+    }
 
     match &state.cfg.smtp_url {
         Some(smtp) => {
@@ -392,6 +464,8 @@ pub async fn magic_request(
 pub struct MagicVerifyQuery {
     #[serde(default)]
     token: String,
+    #[serde(default)]
+    next: Option<String>,
 }
 
 /// `GET /auth/magic/verify?token=...` - consume a token and start a session.
@@ -422,7 +496,8 @@ pub async fn magic_verify(
             }
         }
     };
-    finish_login(&state, &user.id)
+    let next = safe_next(&state, q.next.as_deref());
+    finish_login(&state, &user.id, next)
 }
 
 /// `POST /auth/logout` - clear the session cookie.

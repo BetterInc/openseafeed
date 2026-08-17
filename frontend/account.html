@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSeaFeed - account</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0b1420; color: #cfe3f5; font: 16px/1.6 system-ui, sans-serif; }
+  header { display: flex; gap: 1.5rem; align-items: baseline; padding: 1rem 1.5rem;
+           border-bottom: 1px solid #1d3242; }
+  header h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: .04em; color: #7fd4a8; }
+  header nav { margin-left: auto; display: flex; gap: 1.25rem; font-size: .95rem; }
+  header nav a { text-decoration: none; color: #9fb8cd; }
+  header nav a:hover { color: #7fd4a8; }
+  main { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  h2 { color: #fff; font-size: 1.5rem; margin-bottom: .5rem; }
+  h3 { color: #7fd4a8; font-size: 1.05rem; letter-spacing: .03em; margin: 2.2rem 0 .6rem; }
+  .muted { color: #9fb8cd; }
+  a { color: #7fd4a8; }
+  code { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 4px;
+         padding: .1rem .4rem; color: #d6ffe4; font-size: .88em;
+         font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+  .card { background: #0e1b2a; border: 1px solid #1d3242; border-radius: 8px;
+          padding: .9rem 1.1rem; margin: .75rem 0; }
+  .card b { color: #fff; }
+  .btn { display: inline-block; padding: .5rem 1.1rem; border-radius: 6px;
+         border: 1px solid #1f7a44; background: #14532d; color: #d6ffe4;
+         font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn:hover { background: #1a6b3a; }
+  .btn.ghost { background: transparent; border-color: #24455f; color: #cfe3f5; font-weight: 400; }
+  .btn.ghost:hover { border-color: #7fd4a8; }
+  .btn.small { padding: .2rem .7rem; font-size: .85rem; }
+  input, select { background: #0e1b2a; color: #cfe3f5; border: 1px solid #24455f;
+                  border-radius: 6px; padding: .5rem .6rem; font: inherit; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid #16283a;
+           font-size: .9rem; }
+  th { color: #7f9ab0; font-weight: 600; }
+  form.inline { margin: .75rem 0; display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  #msg { margin-top: .5rem; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPENSEAFEED</h1>
+  <nav>
+    <a href="/">Home</a>
+    <a href="https://stream.openseafeed.com/">Live map</a>
+    <a href="/docs.html">API docs</a>
+  </nav>
+</header>
+<main>
+  <div id="loading" class="muted">Loading...</div>
+
+  <!-- Signed-out view -->
+  <section id="signin" class="hide">
+    <h2>Sign in</h2>
+    <p class="muted">OpenSeaFeed is a free, community-owned AIS network. The
+      <a href="https://stream.openseafeed.com/">live map</a> and most of the
+      <a href="/docs.html">API</a> work without any account. Sign in when you want
+      a key of your own:</p>
+    <div class="card"><b>Use the data</b> -
+      <span class="muted">a <code>live</code> key lifts the anonymous limits: bigger map areas
+      on the stream and deeper history queries.</span></div>
+    <div class="card"><b>Contribute data</b> -
+      <span class="muted">a <code>feed</code> key (or a registered receiver station) lets you
+      push AIS into the network. Active contributors get the highest tier: unlimited
+      streaming and the freshest data.</span></div>
+
+    <h3>Sign in</h3>
+    <p id="oauth-buttons"></p>
+    <p class="muted" id="email-intro">Enter your email and we send a one-time sign-in link.
+      No password, no separate registration step - your first sign-in creates the account.</p>
+    <form class="inline" id="magic">
+      <input type="email" name="email" placeholder="you@example.com" required>
+      <button class="btn" type="submit">Email me a sign-in link</button>
+    </form>
+    <p class="muted" id="msg"></p>
+  </section>
+
+  <!-- Signed-in view -->
+  <section id="dash" class="hide">
+    <h2>Your account</h2>
+    <p class="muted">Signed in as <strong id="who"></strong> - tier: <strong id="tier"></strong>
+      <span class="muted">(contributor = you actively feed the network; it unlocks unlimited
+      streaming and the freshest data)</span>
+      &nbsp;<button class="btn ghost small" id="logout">Log out</button></p>
+
+    <h3>API keys</h3>
+    <p class="muted"><code>live</code> keys read the API (stream, snapshot, history);
+      <code>feed</code> keys authenticate data you push to <code>ingest.openseafeed.com</code>.
+      Treat them like passwords. The <a href="/docs.html">API docs</a> show how to use each kind.</p>
+    <table><thead><tr><th>Key</th><th>Kind</th><th>Label</th><th></th></tr></thead>
+      <tbody id="keys"></tbody></table>
+    <form class="inline" id="newkey">
+      <select name="kind">
+        <option value="live">live (use the data)</option>
+        <option value="feed">feed (contribute data)</option>
+      </select>
+      <input type="text" name="label" placeholder="label, e.g. my-app (optional)">
+      <button class="btn" type="submit">Create key</button>
+    </form>
+
+    <h3>Receiver stations</h3>
+    <p class="muted">A station is your own AIS receiver (RTL-SDR, AIS-catcher, dAISy, ...).
+      Registering one gives it its own key to feed with; a station seen in the last 7 days
+      makes you a contributor. Position is optional and only used for coverage maps.</p>
+    <table><thead><tr><th>Name</th><th>Station key</th><th>Msgs</th><th>Last seen</th></tr></thead>
+      <tbody id="stations"></tbody></table>
+    <form class="inline" id="newstation">
+      <input type="text" name="name" placeholder="station name, e.g. rooftop-enschede" required>
+      <input type="number" step="any" name="lat" placeholder="lat (optional)">
+      <input type="number" step="any" name="lon" placeholder="lon (optional)">
+      <button class="btn" type="submit">Register station</button>
+    </form>
+  </section>
+</main>
+<script>
+"use strict";
+// The account page runs on openseafeed.com and drives the API on
+// api.openseafeed.com with the session cookie (same site, so it rides along).
+const API = location.hostname.endsWith("openseafeed.com")
+  ? "https://api.openseafeed.com"
+  : "http://localhost:8083";
+
+const $ = (id) => document.getElementById(id);
+const show = (id) => { $("loading").classList.add("hide");
+  $("signin").classList.add("hide"); $("dash").classList.add("hide");
+  $(id).classList.remove("hide"); };
+
+async function api(path, opts = {}) {
+  return fetch(API + path, Object.assign({ credentials: "include" }, opts));
+}
+
+function td(parent, text) {
+  const cell = parent.insertCell();
+  cell.textContent = text == null ? "" : String(text);
+  return cell;
+}
+
+function renderDash(me) {
+  $("who").textContent = me.user.display_name || me.user.email || me.user.id;
+  $("tier").textContent = me.tier;
+
+  const keys = $("keys");
+  keys.replaceChildren();
+  const active = (me.keys || []).filter((k) => !k.revoked_at);
+  for (const k of active) {
+    const tr = keys.insertRow();
+    const c = td(tr, ""); const code = document.createElement("code");
+    code.textContent = k.key; c.append(code);
+    td(tr, k.kind);
+    td(tr, k.label || "");
+    if (k.kind !== "station") {
+      const btn = document.createElement("button");
+      btn.className = "btn ghost small"; btn.textContent = "revoke";
+      btn.onclick = async () => {
+        if (!confirm("Revoke this key? Anything using it stops working.")) return;
+        await api("/v1/keys/" + encodeURIComponent(k.key), { method: "DELETE" });
+        load();
+      };
+      td(tr, "").append(btn);
+    } else { td(tr, ""); }
+  }
+  if (!active.length) { const tr = keys.insertRow(); const c = td(tr, "No keys yet - create one below.");
+    c.colSpan = 4; c.className = "muted"; }
+
+  const st = $("stations");
+  st.replaceChildren();
+  for (const s of me.stations || []) {
+    const tr = st.insertRow();
+    td(tr, s.name);
+    const c = td(tr, ""); const code = document.createElement("code");
+    code.textContent = s.key; c.append(code);
+    td(tr, s.msgs_total);
+    td(tr, s.last_seen_at || "never");
+  }
+  if (!(me.stations || []).length) { const tr = st.insertRow();
+    const c = td(tr, "No stations yet."); c.colSpan = 4; c.className = "muted"; }
+
+  show("dash");
+}
+
+async function renderSignin() {
+  try {
+    const p = await (await api("/v1/auth/providers")).json();
+    const box = $("oauth-buttons");
+    box.replaceChildren();
+    const next = encodeURIComponent(location.href);
+    if (p.github) { const a = document.createElement("a"); a.className = "btn";
+      a.href = `${API}/auth/github?next=${next}`; a.textContent = "Sign in with GitHub"; box.append(a, " "); }
+    if (p.google) { const a = document.createElement("a"); a.className = "btn";
+      a.href = `${API}/auth/google?next=${next}`; a.textContent = "Sign in with Google"; box.append(a); }
+    if (p.github || p.google) {
+      $("email-intro").textContent = "Or use your email: we send a one-time sign-in link. "
+        + "Your first sign-in creates the account.";
+    }
+  } catch (e) { /* providers unknown; the email form still works */ }
+  show("signin");
+}
+
+async function load() {
+  try {
+    const r = await api("/v1/me");
+    if (r.ok) { renderDash(await r.json()); } else { renderSignin(); }
+  } catch (e) {
+    $("loading").textContent = "Could not reach the API - try again in a moment.";
+  }
+}
+
+$("magic").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = await api("/auth/magic", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: e.target.email.value, next: location.href }),
+  });
+  const j = await r.json().catch(() => ({}));
+  $("msg").textContent = j.message || j.error || "Done.";
+});
+
+$("newkey").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = await api("/v1/keys", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: e.target.kind.value, label: e.target.label.value || null }),
+  });
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error || "Request failed"); return; }
+  load();
+});
+
+$("newstation").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const lat = e.target.lat.value ? parseFloat(e.target.lat.value) : null;
+  const lon = e.target.lon.value ? parseFloat(e.target.lon.value) : null;
+  const r = await api("/v1/stations", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: e.target.name.value, lat, lon }),
+  });
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error || "Request failed"); return; }
+  load();
+});
+
+$("logout").addEventListener("click", async () => {
+  await api("/auth/logout", { method: "POST" });
+  load();
+});
+
+load();
+</script>
+</body>
+</html>
