@@ -118,6 +118,16 @@
       <input type="number" step="any" name="lon" placeholder="lon (optional)">
       <button class="btn" type="submit">Register station</button>
     </form>
+
+    <!-- Admin panel: rendered only for moderators/admins -->
+    <div id="adminpanel" class="hide">
+      <h3>Admin - users</h3>
+      <p class="muted">Override caps an account's tier: <code>free</code> limits it,
+        <code>contributor</code> unlocks it, <code>auto</code> computes it from actual
+        contribution. Moderators set overrides; only admins assign roles.</p>
+      <table><thead><tr><th>User</th><th>Role</th><th>Tier</th><th>Override</th><th>Keys</th><th>Stations</th></tr></thead>
+        <tbody id="admin-users"></tbody></table>
+    </div>
   </section>
 </main>
 <script>
@@ -183,7 +193,54 @@ function renderDash(me) {
   if (!(me.stations || []).length) { const tr = st.insertRow();
     const c = td(tr, "No stations yet."); c.colSpan = 4; c.className = "muted"; }
 
+  if (me.role === "admin" || me.role === "moderator") {
+    $("adminpanel").classList.remove("hide");
+    loadAdmin(me.role);
+  } else {
+    $("adminpanel").classList.add("hide");
+  }
+
   show("dash");
+}
+
+function select(options, current, disabled, onchange) {
+  const s = document.createElement("select");
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt; o.textContent = opt;
+    if (opt === current) o.selected = true;
+    s.append(o);
+  }
+  s.disabled = disabled;
+  s.onchange = onchange;
+  return s;
+}
+
+async function loadAdmin(myRole) {
+  const r = await api("/v1/admin/users");
+  if (!r.ok) return;
+  const users = await r.json();
+  const tb = $("admin-users");
+  tb.replaceChildren();
+  const update = async (id, body) => {
+    const resp = await api("/v1/admin/users/" + encodeURIComponent(id), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) alert((await resp.json().catch(() => ({}))).error || "update failed");
+    load();
+  };
+  for (const u of users) {
+    const tr = tb.insertRow();
+    td(tr, u.email || u.display_name || u.id);
+    tr.insertCell().append(select(["user", "moderator", "admin"], u.role,
+      myRole !== "admin", (e) => update(u.id, { role: e.target.value })));
+    td(tr, u.tier);
+    tr.insertCell().append(select(["auto", "free", "contributor"], u.tier_override || "auto",
+      false, (e) => update(u.id, { tier_override: e.target.value })));
+    td(tr, u.keys);
+    td(tr, u.stations);
+  }
 }
 
 async function renderSignin() {

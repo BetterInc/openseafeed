@@ -276,6 +276,9 @@ pub fn router(state: AppState) -> Router {
             "/v1/stations",
             post(api::create_station).get(api::list_stations),
         )
+        // Admin panel API (session + role checked per handler).
+        .route("/v1/admin/users", get(api::admin_list_users))
+        .route("/v1/admin/users/{id}", post(api::admin_update_user))
         // Public, CORS-open vessel enrichment used by the live map. NOT under
         // /v1/vessels: the api ingress routes that prefix to the snapshotter.
         .route("/v1/photos/{mmsi}", get(api::vessel_photo))

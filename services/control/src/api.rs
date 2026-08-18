@@ -31,6 +31,8 @@ struct MeResponse {
     keys: Vec<db::ApiKey>,
     stations: Vec<db::Station>,
     tier: &'static str,
+    /// `user`, `moderator` or `admin` (drives the account page's admin panel).
+    role: String,
 }
 
 pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -44,6 +46,7 @@ pub async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
             keys: db::keys_for_user(&conn, &user.id)?,
             stations: db::stations_for_user(&conn, &user.id)?,
             tier: db::tier_for_user(&conn, &user.id)?,
+            role: user.role.clone(),
             user,
         })
     })();
@@ -281,4 +284,100 @@ fn photo_response(image_url: Option<String>, page_url: Option<String>) -> Respon
         })),
     )
         .into_response()
+}
+
+// --- admin -------------------------------------------------------------
+
+/// Resolve the caller and require at least the given role
+/// (`moderator` counts for moderator, `admin` for both).
+async fn require_role(
+    state: &AppState,
+    headers: &HeaderMap,
+    need_admin: bool,
+) -> Result<db::User, Response> {
+    let user = require_user(state, headers).await?;
+    let ok = match user.role.as_str() {
+        "admin" => true,
+        "moderator" => !need_admin,
+        _ => false,
+    };
+    if ok {
+        Ok(user)
+    } else {
+        Err(json_error(StatusCode::FORBIDDEN, "insufficient role"))
+    }
+}
+
+/// `GET /v1/admin/users` — every account with role, tier and usage counts.
+/// Moderators and admins.
+pub async fn admin_list_users(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_role(&state, &headers, false).await {
+        return resp;
+    }
+    let conn = state.db.lock().await;
+    match db::list_users_admin(&conn) {
+        Ok(users) => Json(users).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+/// `POST /v1/admin/users/{id}` — update a user's tier override (moderators+)
+/// and/or role (admins only). `tier_override: "auto"` clears the override.
+#[derive(Deserialize)]
+pub struct AdminUserUpdate {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    tier_override: Option<String>,
+}
+
+pub async fn admin_update_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<AdminUserUpdate>,
+) -> Response {
+    let caller = match require_role(&state, &headers, false).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    if let Some(role) = &req.role {
+        if caller.role != "admin" {
+            return json_error(StatusCode::FORBIDDEN, "only admins can change roles");
+        }
+        if caller.id == user_id {
+            return json_error(StatusCode::BAD_REQUEST, "you cannot change your own role");
+        }
+        if !matches!(role.as_str(), "user" | "moderator" | "admin") {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "role must be user, moderator or admin",
+            );
+        }
+    }
+    if let Some(t) = &req.tier_override {
+        if !matches!(t.as_str(), "auto" | "free" | "contributor") {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "tier_override must be auto, free or contributor",
+            );
+        }
+    }
+
+    let conn = state.db.lock().await;
+    let result = (|| {
+        if let Some(role) = &req.role {
+            db::set_user_role(&conn, &user_id, role)?;
+        }
+        if let Some(t) = &req.tier_override {
+            let value = if t == "auto" { None } else { Some(t.as_str()) };
+            db::set_user_tier_override(&conn, &user_id, value)?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })();
+    match result {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(err) => internal_error(err),
+    }
 }

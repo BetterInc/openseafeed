@@ -27,6 +27,10 @@ pub struct User {
     pub google_id: Option<String>,
     pub display_name: Option<String>,
     pub created_at: String,
+    /// `user`, `moderator` or `admin`.
+    pub role: String,
+    /// Manual tier cap/boost set from the admin panel; `None` = computed.
+    pub tier_override: Option<String>,
 }
 
 /// An issued API key. `kind` is one of `live`, `station`, `feed`.
@@ -59,7 +63,26 @@ pub struct Station {
 pub fn open(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
     migrate(&conn)?;
+    ensure_bootstrap_admin(&conn)?;
     Ok(conn)
+}
+
+/// If no admin exists yet, the oldest account becomes one. Deterministic
+/// zero-config bootstrap: on a fresh deployment the operator signs in first
+/// and is therefore the admin; roles can be handed out from the panel after.
+pub fn ensure_bootstrap_admin(conn: &Connection) -> Result<()> {
+    let admins: i64 =
+        conn.query_row("SELECT COUNT(*) FROM users WHERE role = 'admin'", [], |r| {
+            r.get(0)
+        })?;
+    if admins == 0 {
+        conn.execute(
+            "UPDATE users SET role = 'admin' WHERE id =
+               (SELECT id FROM users ORDER BY created_at LIMIT 1)",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 /// Apply the schema. Split out so tests can migrate an in-memory connection.
@@ -124,6 +147,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_stations_key  ON stations(key);
         "#,
     )?;
+    // Additive columns on tables that predate them. SQLite has no
+    // ADD COLUMN IF NOT EXISTS, so ignore the duplicate-column error.
+    for sql in [
+        "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
+        "ALTER TABLE users ADD COLUMN tier_override TEXT",
+    ] {
+        if let Err(err) = conn.execute(sql, []) {
+            if !err.to_string().contains("duplicate column") {
+                return Err(err.into());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -166,10 +201,13 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
         google_id: row.get(3)?,
         display_name: row.get(4)?,
         created_at: row.get(5)?,
+        role: row.get(6)?,
+        tier_override: row.get(7)?,
     })
 }
 
-const USER_COLS: &str = "id, email, github_id, google_id, display_name, created_at";
+const USER_COLS: &str =
+    "id, email, github_id, google_id, display_name, created_at, role, tier_override";
 
 pub fn user_by_id(conn: &Connection, id: &str) -> Result<Option<User>> {
     let user = conn
@@ -215,6 +253,8 @@ pub fn create_user(
         google_id: google_id.map(str::to_string),
         display_name: display_name.map(str::to_string),
         created_at,
+        role: "user".to_string(),
+        tier_override: None,
     })
 }
 
@@ -442,6 +482,21 @@ pub fn record_heartbeat(conn: &Connection, station_key: &str, msgs: i64) -> Resu
 const CONTRIBUTOR_WINDOW_DAYS: i64 = 7;
 
 pub fn tier_for_user(conn: &Connection, user_id: &str) -> Result<&'static str> {
+    // A manual override from the admin panel wins over the computed tier.
+    let overridden: Option<Option<String>> = conn
+        .query_row(
+            "SELECT tier_override FROM users WHERE id = ?1",
+            params![user_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(Some(t)) = overridden {
+        return Ok(if t == "contributor" {
+            "contributor"
+        } else {
+            "free"
+        });
+    }
     let cutoff = (Utc::now() - Duration::days(CONTRIBUTOR_WINDOW_DAYS)).to_rfc3339();
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM stations
@@ -537,6 +592,76 @@ pub fn photo_put(
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(mmsi) DO UPDATE SET imo = ?2, image_url = ?3, page_url = ?4, fetched_at = ?5",
         params![mmsi, imo, image_url, page_url, now_rfc3339()],
+    )?;
+    Ok(())
+}
+
+// --- admin -------------------------------------------------------------
+
+/// One row of the admin panel's user table.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminUser {
+    pub id: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub tier: String,
+    pub tier_override: Option<String>,
+    pub keys: i64,
+    pub stations: i64,
+    pub created_at: String,
+}
+
+pub fn list_users_admin(conn: &Connection) -> Result<Vec<AdminUser>> {
+    let mut stmt = conn.prepare(
+        "SELECT u.id, u.email, u.display_name, u.role, u.tier_override, u.created_at,
+                (SELECT COUNT(*) FROM api_keys k WHERE k.user_id = u.id AND k.revoked_at IS NULL),
+                (SELECT COUNT(*) FROM stations s WHERE s.user_id = u.id)
+         FROM users u ORDER BY u.created_at",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, i64>(6)?,
+            r.get::<_, i64>(7)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, email, display_name, role, tier_override, created_at, keys, stations) = row?;
+        let tier = tier_for_user(conn, &id)?.to_string();
+        out.push(AdminUser {
+            id,
+            email,
+            display_name,
+            role,
+            tier,
+            tier_override,
+            keys,
+            stations,
+            created_at,
+        });
+    }
+    Ok(out)
+}
+
+pub fn set_user_role(conn: &Connection, user_id: &str, role: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET role = ?1 WHERE id = ?2",
+        params![role, user_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_tier_override(conn: &Connection, user_id: &str, tier: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET tier_override = ?1 WHERE id = ?2",
+        params![tier, user_id],
     )?;
     Ok(())
 }
