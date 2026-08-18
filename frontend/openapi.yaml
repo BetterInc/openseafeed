@@ -145,7 +145,7 @@ components:
     ApiKey:
       type: object
       properties:
-        key: { type: string, example: osf_live_2472f0104bc95a5d3a32fcddba70a9a2 }
+        key: { type: string, example: osf_live_0123456789abcdef0123456789abcdef }
         kind: { type: string, enum: [live, feed, station] }
         label: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
