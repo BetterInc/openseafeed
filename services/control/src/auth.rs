@@ -515,9 +515,18 @@ async fn send_magic_email(smtp_url: &str, from: &str, to: &str, link: &str) -> a
     use lettre::message::header::ContentType;
     use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
+    // Explicit Message-ID on the sender's domain: lettre does not add one on
+    // its own, and a missing Message-ID is a classic spam signal (rspamd
+    // scored it, and Gmail stamped SMTPIN_ADDED_MISSING on the first sends).
+    let from_domain = from
+        .rsplit('@')
+        .next()
+        .unwrap_or("openseafeed.com")
+        .trim_end_matches('>');
     let msg = Message::builder()
         .from(from.parse()?)
         .to(to.parse()?)
+        .message_id(Some(format!("<{}@{}>", random_state(), from_domain)))
         .subject("Your OpenSeaFeed sign-in link")
         .header(ContentType::TEXT_PLAIN)
         .body(format!(
