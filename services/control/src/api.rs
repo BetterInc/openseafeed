@@ -381,3 +381,105 @@ pub async fn admin_update_user(
         Err(err) => internal_error(err),
     }
 }
+
+// --- coverage ------------------------------------------------------------
+
+/// One computed coverage grid, shared by every caller until it expires.
+pub struct CoverageCache {
+    pub at_ms: u64,
+    pub body: std::sync::Arc<String>,
+}
+
+const COVERAGE_TTL_MS: u64 = 10 * 60 * 1000;
+const COVERAGE_DAYS: u32 = 7;
+const COVERAGE_PRECISION: u32 = 4; // geohash-4 cells, ~39x19 km
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn coverage_response(body: std::sync::Arc<String>) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=600"),
+            (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
+        body.as_str().to_owned(),
+    )
+        .into_response()
+}
+
+/// `GET /v1/coverage` - where the network can actually hear, computed from
+/// what it actually heard: per geohash-4 cell, unique ships and message count
+/// over the last 7 days. Public and cached; the empty cells ARE the point -
+/// every hole is a place a new receiver would light up.
+pub async fn coverage(State(state): State<AppState>) -> Response {
+    let now = now_ms();
+    if let Some(c) = state.coverage.read().await.as_ref() {
+        if now - c.at_ms < COVERAGE_TTL_MS {
+            return coverage_response(c.body.clone());
+        }
+    }
+    let mut slot = state.coverage.write().await;
+    // Another request may have refreshed while we waited for the lock.
+    if let Some(c) = slot.as_ref() {
+        if now - c.at_ms < COVERAGE_TTL_MS {
+            return coverage_response(c.body.clone());
+        }
+    }
+    match fetch_coverage(&state).await {
+        Ok(body) => {
+            let body = std::sync::Arc::new(body);
+            *slot = Some(CoverageCache {
+                at_ms: now,
+                body: body.clone(),
+            });
+            coverage_response(body)
+        }
+        Err(err) => {
+            tracing::error!(%err, "coverage query failed");
+            // A stale grid beats an error page.
+            match slot.as_ref() {
+                Some(c) => coverage_response(c.body.clone()),
+                None => json_error(StatusCode::BAD_GATEWAY, "coverage unavailable"),
+            }
+        }
+    }
+}
+
+async fn fetch_coverage(state: &AppState) -> anyhow::Result<String> {
+    let url = std::env::var("OSF_CLICKHOUSE_URL")
+        .unwrap_or_else(|_| "http://clickhouse:8123".to_string());
+    let sql = format!(
+        "SELECT geohashEncode(lon, lat, {COVERAGE_PRECISION}) AS g,                 uniq(mmsi) AS ships, count() AS msgs          FROM osf.positions WHERE ts > now() - INTERVAL {COVERAGE_DAYS} DAY          GROUP BY g FORMAT JSONEachRow          SETTINGS output_format_json_quote_64bit_integers = 0"
+    );
+    let mut req = state.http.post(&url).body(sql);
+    if let Ok(u) = std::env::var("OSF_CLICKHOUSE_USER") {
+        req = req.header("X-ClickHouse-User", u);
+    }
+    if let Ok(p) = std::env::var("OSF_CLICKHOUSE_PASSWORD") {
+        req = req.header("X-ClickHouse-Key", p);
+    }
+    let text = req
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let cells: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    Ok(serde_json::json!({
+        "generated_at_ms": now_ms(),
+        "days": COVERAGE_DAYS,
+        "precision": COVERAGE_PRECISION,
+        "cells": cells,
+    })
+    .to_string())
+}

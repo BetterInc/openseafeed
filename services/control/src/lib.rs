@@ -156,6 +156,9 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub cfg: Arc<Config>,
     pub http: reqwest::Client,
+    /// Cached coverage grid: everyone asks the same question, so it is
+    /// computed at most once per TTL and served as one shared string.
+    pub coverage: Arc<tokio::sync::RwLock<Option<api::CoverageCache>>>,
 }
 
 impl AppState {
@@ -170,6 +173,7 @@ impl AppState {
             db: Arc::new(Mutex::new(conn)),
             cfg: Arc::new(cfg),
             http,
+            coverage: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -282,6 +286,7 @@ pub fn router(state: AppState) -> Router {
         // Public, CORS-open vessel enrichment used by the live map. NOT under
         // /v1/vessels: the api ingress routes that prefix to the snapshotter.
         .route("/v1/photos/{mmsi}", get(api::vessel_photo))
+        .route("/v1/coverage", get(api::coverage))
         .route("/v1/auth/providers", get(auth_providers))
         // Internal (shared-secret) API
         .route("/v1/internal/keys/validate", get(internal::validate_key))

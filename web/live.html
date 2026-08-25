@@ -88,6 +88,7 @@
       <div id="results"></div>
     </span>
     <label><input type="checkbox" id="seamarks"> seamarks</label>
+    <label><input type="checkbox" id="coverage"> coverage</label>
     <button id="go">connect</button>
   </div>
 </div>
@@ -197,6 +198,66 @@ map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
 
 document.getElementById("seamarks").onchange = (e) =>
   map.setLayoutProperty("seamark", "visibility", e.target.checked ? "visible" : "none");
+
+// -- Coverage layer: where the network heard ships in the last 7 days. -----
+// Shaded cells = receivers can hear there; blank sea = nobody is listening,
+// which is exactly where a new receiver helps most.
+const GH32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+function geohashBounds(g) {
+  let even = true, latMin = -90, latMax = 90, lonMin = -180, lonMax = 180;
+  for (const ch of g) {
+    const cd = GH32.indexOf(ch);
+    for (let bit = 4; bit >= 0; bit--) {
+      const on = (cd >> bit) & 1;
+      if (even) {
+        const mid = (lonMin + lonMax) / 2;
+        if (on) lonMin = mid; else lonMax = mid;
+      } else {
+        const mid = (latMin + latMax) / 2;
+        if (on) latMin = mid; else latMax = mid;
+      }
+      even = !even;
+    }
+  }
+  return [lonMin, latMin, lonMax, latMax];
+}
+
+let coverageLoaded = false;
+document.getElementById("coverage").onchange = async (e) => {
+  if (!e.target.checked) {
+    if (map.getLayer("coverage")) map.setLayoutProperty("coverage", "visibility", "none");
+    return;
+  }
+  if (coverageLoaded) {
+    map.setLayoutProperty("coverage", "visibility", "visible");
+    return;
+  }
+  try {
+    const r = await fetch(`${API_BASE}/v1/coverage`);
+    const cov = await r.json();
+    const features = (cov.cells || []).map((c) => {
+      const [w, s, e2, n] = geohashBounds(c.g);
+      return { type: "Feature",
+        properties: { ships: c.ships },
+        geometry: { type: "Polygon",
+          coordinates: [[[w, s], [e2, s], [e2, n], [w, n], [w, s]]] } };
+    });
+    map.addSource("coverage", { type: "geojson",
+      data: { type: "FeatureCollection", features } });
+    map.addLayer({
+      id: "coverage", type: "fill", source: "coverage",
+      paint: {
+        "fill-color": ["step", ["get", "ships"],
+          "#16324a", 10, "#1d4a66", 50, "#1f6a80", 200, "#27908c"],
+        "fill-opacity": 0.35,
+        "fill-outline-color": "rgba(0,0,0,0)",
+      },
+    }, "trail"); // under the vessels and the track
+    coverageLoaded = true;
+  } catch (err) {
+    e.target.checked = false;
+  }
+};
 
 const seen = new Map(); // mmsi -> {lon, lat, t(ms), name, sog, cog, type, stype}
 let total = 0, windowCount = 0;

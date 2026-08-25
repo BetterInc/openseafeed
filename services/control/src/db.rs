@@ -42,6 +42,8 @@ pub struct ApiKey {
     pub label: Option<String>,
     pub created_at: String,
     pub revoked_at: Option<String>,
+    /// Last time ingest/fanout validated this key (throttled writes).
+    pub last_used_at: Option<String>,
 }
 
 /// A contributing station and its rolling ingest counters.
@@ -152,6 +154,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     for sql in [
         "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
         "ALTER TABLE users ADD COLUMN tier_override TEXT",
+        "ALTER TABLE api_keys ADD COLUMN last_used_at TEXT",
     ] {
         if let Err(err) = conn.execute(sql, []) {
             if !err.to_string().contains("duplicate column") {
@@ -315,10 +318,11 @@ fn row_to_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKey> {
         label: row.get(3)?,
         created_at: row.get(4)?,
         revoked_at: row.get(5)?,
+        last_used_at: row.get(6)?,
     })
 }
 
-const KEY_COLS: &str = "key, user_id, kind, label, created_at, revoked_at";
+const KEY_COLS: &str = "key, user_id, kind, label, created_at, revoked_at, last_used_at";
 
 /// Mint and persist an API key of the given kind for `user_id`.
 pub fn create_key(
@@ -341,6 +345,7 @@ pub fn create_key(
         label: label.map(str::to_string),
         created_at,
         revoked_at: None,
+        last_used_at: None,
     })
 }
 
@@ -440,6 +445,7 @@ pub fn create_station(
         label: Some(name.to_string()),
         created_at,
         revoked_at: None,
+        last_used_at: None,
     };
     Ok((station, api_key))
 }
@@ -481,6 +487,16 @@ pub fn record_heartbeat(conn: &Connection, station_key: &str, msgs: i64) -> Resu
 /// last `CONTRIBUTOR_WINDOW_DAYS`; otherwise `free`.
 const CONTRIBUTOR_WINDOW_DAYS: i64 = 7;
 
+/// Record that a key was just presented to the data plane. Cheap single-row
+/// update; callers throttle (the validators cache lookups for 60s anyway).
+pub fn touch_key(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE api_keys SET last_used_at = ?1 WHERE key = ?2",
+        params![now_rfc3339(), key],
+    )?;
+    Ok(())
+}
+
 pub fn tier_for_user(conn: &Connection, user_id: &str) -> Result<&'static str> {
     // A manual override from the admin panel wins over the computed tier.
     let overridden: Option<Option<String>> = conn
@@ -498,9 +514,16 @@ pub fn tier_for_user(conn: &Connection, user_id: &str) -> Result<&'static str> {
         });
     }
     let cutoff = (Utc::now() - Duration::days(CONTRIBUTOR_WINDOW_DAYS)).to_rfc3339();
+    // Contribution = a station seen recently OR a feed/station key actually
+    // presented to ingest recently. Consuming (live keys) never counts.
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM stations
-         WHERE user_id = ?1 AND last_seen_at IS NOT NULL AND last_seen_at >= ?2",
+        "SELECT
+           (SELECT COUNT(*) FROM stations
+             WHERE user_id = ?1 AND last_seen_at IS NOT NULL AND last_seen_at >= ?2)
+         + (SELECT COUNT(*) FROM api_keys
+             WHERE user_id = ?1 AND kind IN ('feed','station')
+               AND revoked_at IS NULL
+               AND last_used_at IS NOT NULL AND last_used_at >= ?2)",
         params![user_id, cutoff],
         |row| row.get(0),
     )?;

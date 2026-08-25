@@ -95,7 +95,7 @@
     <p class="muted"><code>live</code> keys read the API (stream, snapshot, history);
       <code>feed</code> keys authenticate data you push to <code>ingest.openseafeed.com</code>.
       Treat them like passwords. The <a href="/docs.html">API docs</a> show how to use each kind.</p>
-    <table><thead><tr><th>Key</th><th>Kind</th><th>Label</th><th></th></tr></thead>
+    <table><thead><tr><th>Key</th><th>Kind</th><th>Label</th><th>Last used</th><th></th></tr></thead>
       <tbody id="keys"></tbody></table>
     <form class="inline" id="newkey">
       <select name="kind">
@@ -166,6 +166,7 @@ function renderDash(me) {
     code.textContent = k.key; c.append(code);
     td(tr, k.kind);
     td(tr, k.label || "");
+    td(tr, k.last_used_at ? k.last_used_at.slice(0, 16).replace("T", " ") : "never");
     if (k.kind !== "station") {
       const btn = document.createElement("button");
       btn.className = "btn ghost small"; btn.textContent = "revoke";
@@ -178,7 +179,7 @@ function renderDash(me) {
     } else { td(tr, ""); }
   }
   if (!active.length) { const tr = keys.insertRow(); const c = td(tr, "No keys yet - create one below.");
-    c.colSpan = 4; c.className = "muted"; }
+    c.colSpan = 5; c.className = "muted"; }
 
   const st = $("stations");
   st.replaceChildren();

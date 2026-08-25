@@ -74,6 +74,25 @@ pub async fn validate_key(
         _ => return Json(serde_json::json!({ "valid": false })).into_response(),
     };
 
+    // Feed/station keys presenting themselves IS contribution - record it so
+    // the contributor tier follows automatically from feeding the network.
+    // Throttle: skip if touched within the last 5 minutes.
+    if key.kind != "live" {
+        let stale = key
+            .last_used_at
+            .as_deref()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| {
+                chrono::Utc::now() - t.with_timezone(&chrono::Utc) > chrono::Duration::minutes(5)
+            })
+            .unwrap_or(true);
+        if stale {
+            if let Err(err) = db::touch_key(&conn, &key.key) {
+                tracing::warn!(%err, "touch_key failed");
+            }
+        }
+    }
+
     let tier = match db::tier_for_user(&conn, &key.user_id) {
         Ok(t) => t,
         Err(err) => {

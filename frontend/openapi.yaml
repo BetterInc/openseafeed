@@ -234,6 +234,36 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/HistoryPoint" }
 
+  /v1/coverage:
+    get:
+      tags: [vessels]
+      summary: Reception coverage grid
+      description: |
+        Where the network can actually hear, computed from what it actually
+        heard: per geohash-4 cell (~39x19 km), unique ships and message count
+        over the last 7 days. Cached server-side (10 min) and browser-cacheable.
+        Blank sea means nobody is listening there - a new receiver in such a
+        cell extends the network for everyone.
+      responses:
+        "200":
+          description: Coverage grid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at_ms: { type: integer }
+                  days: { type: integer, example: 7 }
+                  precision: { type: integer, example: 4 }
+                  cells:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        g: { type: string, description: geohash-4 cell, example: u1h3 }
+                        ships: { type: integer }
+                        msgs: { type: integer }
+
   /v1/photos/{mmsi}:
     get:
       tags: [vessels]
