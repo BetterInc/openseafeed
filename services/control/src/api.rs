@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{db, json_error, AppState};
 
 /// Resolve the caller or produce a `401` response.
+#[allow(clippy::result_large_err)] // the Err IS the HTTP response; boxing it buys nothing
 async fn require_user(state: &AppState, headers: &HeaderMap) -> Result<db::User, Response> {
     state
         .current_user(headers)
@@ -290,6 +291,7 @@ fn photo_response(image_url: Option<String>, page_url: Option<String>) -> Respon
 
 /// Resolve the caller and require at least the given role
 /// (`moderator` counts for moderator, `admin` for both).
+#[allow(clippy::result_large_err)] // the Err IS the HTTP response; boxing it buys nothing
 async fn require_role(
     state: &AppState,
     headers: &HeaderMap,
