@@ -73,11 +73,15 @@ services:
       # an empty value falls through to the embedded copy, so a deploy is
       # whatever was built, not whatever is in web/ on disk.
       OSF_LIVE_HTML: ""
+      # The base file's dev cadence would re-pull the whole fleet every 15s;
+      # here it tracks the snapshotter's once-a-minute generation.
+      OSF_SEED_REFRESH_SECS: "60"
     ports: !reset []
 
   snapshotter:
     environment:
       <<: *prod-env
+      OSF_SNAPSHOT_SECS: "60"
     ports: !reset []
 
   control:

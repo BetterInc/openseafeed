@@ -28,12 +28,16 @@ receivers (SDR workers, AIS-catcher, partner networks, open gov feeds)
 | Endpoint | Free tier | Contributor tier |
 |---|---|---|
 | `GET /v1/snapshot` — full fleet | 10-minute freshness | 1-minute freshness |
-| `wss /v1/stream` — live, aisstream.io-compatible subscribe | limited area/budget | unlimited |
+| `wss /v1/stream` — live, aisstream.io-compatible subscribe (warm start: the vessels in your boxes are replayed on subscribe) | limited area/budget | unlimited |
 | `wss /v1/ingest` — push your feed to us | — | feed key required |
 | `GET /v1/stations` — public coverage stats | open | open |
 
 Contributing data (running a receiver or pushing a feed) automatically earns
 contributor tier. Consuming is free for everyone.
+
+OpenSeaFeed's own live map is a first-party viewer: keyless, but unmetered
+and undelayed (`OSF_VIEWER_ORIGINS`). It is the shop window for the feed, not
+a way around the tiers - it shows exactly what any client can subscribe to.
 
 ## Repository layout
 

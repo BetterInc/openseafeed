@@ -264,21 +264,21 @@ pub fn encode_aids_to_navigation(p: &AidsToNavigationReport) -> (String, u8) {
 }
 
 /// Encode a static data report (type 24, part A or B per `part_number`) —
-/// 160/168 bits.
+/// 160/168 bits. `FixType` has no bits in this message and is not encoded.
 pub fn encode_static_data_report(p: &StaticDataReport) -> (String, u8) {
     let mut b = BitsMut::new();
     push_header(&mut b, &p.header);
     b.push_uint(p.part_number as u64, 2);
-    if p.part_number == 0 {
-        b.push_str(&p.name, 120);
+    if p.part_number {
+        b.push_uint(p.report_b.ship_type as u64, 8);
+        b.push_str(&p.report_b.vendor_id_name, 18);
+        b.push_uint(p.report_b.vender_id_model as u64, 4);
+        b.push_uint(p.report_b.vender_id_serial as u64, 20);
+        b.push_str(&p.report_b.call_sign, 42);
+        push_dimension(&mut b, &p.report_b.dimension);
+        b.push_uint(p.report_b.spare as u64, 6);
     } else {
-        b.push_uint(p.ship_type as u64, 8);
-        b.push_str(&p.vendor_id_name, 18);
-        b.push_uint(p.vender_id_model as u64, 4);
-        b.push_uint(p.vender_id_serial as u64, 20);
-        b.push_str(&p.call_sign, 42);
-        push_dimension(&mut b, &p.dimension);
-        b.push_uint(p.spare as u64, 6);
+        b.push_str(&p.report_a.name, 120);
     }
     b.to_payload()
 }

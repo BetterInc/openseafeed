@@ -37,11 +37,22 @@ info:
       "APIKey": "osf_live_...",
       "BoundingBoxes": [[[54, -5], [72, 32]]],
       "FiltersShipMMSI": ["257970000"],
-      "FilterMessageTypes": ["PositionReport"]
+      "FilterMessageTypes": ["PositionReport"],
+      "InitialState": true
     }
     ```
 
     `APIKey` may be omitted (free tier). Corners are `[lat, lon]` pairs.
+
+    **You start warm.** OpenSeaFeed holds one uplink per upstream feed and
+    every consumer streams off it, so a new subscription does not have to
+    wait for ships to transmit again: the vessels already in your bounding
+    boxes are replayed as `PositionReport` frames the moment you subscribe,
+    then the live messages follow. They are ordinary frames carrying each
+    vessel's last known position and its real `time_utc` - an older
+    timestamp is the only thing that marks one as replayed. Send
+    `"InitialState": false` for deltas only.
+
     Each outgoing frame is one decoded AIS message:
 
     ```json
@@ -59,6 +70,12 @@ info:
 
     `ShipType` and `IMO` are OpenSeaFeed extensions over the aisstream.io
     format, filled from the vessel's static messages and omitted when unknown.
+
+    Type 24 (`StaticDataReport`) nests its two halves the way aisstream.io
+    does - `ReportA` carries the name, `ReportB` the type, call sign and
+    dimensions, and each has a `Valid` flag saying which half the vessel
+    actually broadcast. This is how a Class B vessel (leisure craft, small
+    fishing boats) is named at all.
 
     ## Sending data: contributing a feed or receiver
 

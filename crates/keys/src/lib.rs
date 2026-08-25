@@ -12,9 +12,47 @@
 
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+
+/// Origins that serve OpenSeaFeed's own live map. A keyless connection from
+/// one of these is a first-party viewer: it gets the whole world, where an
+/// anonymous third-party client stays on the free tier's area cap and
+/// snapshot delay. Override with `OSF_VIEWER_ORIGINS` (comma-separated).
+///
+/// `Origin` is set by the browser and page JavaScript cannot forge it, but a
+/// non-browser client can send whatever it likes. This is a fair-use gate for
+/// our own shop window, not an authentication boundary — nothing behind it is
+/// private, it is the same public feed either way.
+const DEFAULT_VIEWER_ORIGINS: &str = "https://stream.openseafeed.com,https://openseafeed.com,\
+http://localhost:8081,http://127.0.0.1:8081";
+
+/// The tier granted to a first-party viewer: unmetered area, freshest data.
+pub const VIEWER_TIER: &str = "viewer";
+
+fn viewer_origins() -> &'static [String] {
+    static ORIGINS: OnceLock<Vec<String>> = OnceLock::new();
+    ORIGINS.get_or_init(|| {
+        std::env::var("OSF_VIEWER_ORIGINS")
+            .unwrap_or_else(|_| DEFAULT_VIEWER_ORIGINS.to_string())
+            .split(',')
+            .map(normalize_origin)
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+}
+
+fn normalize_origin(raw: &str) -> String {
+    raw.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+/// Whether an `Origin` header belongs to one of our own map hosts.
+pub fn is_first_party_origin(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else { return false };
+    let origin = normalize_origin(origin);
+    !origin.is_empty() && viewer_origins().contains(&origin)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -217,6 +255,26 @@ mod tests {
         assert_eq!(kind_of("osf_live_short"), None);
         assert_eq!(kind_of("sk_live_abcdef1234"), None);
         assert_eq!(kind_of("osf_live_bad key!!"), None);
+    }
+
+    #[test]
+    fn first_party_origins_are_exact_matches() {
+        assert!(is_first_party_origin(Some(
+            "https://stream.openseafeed.com"
+        )));
+        // Trailing slash and case are normalized away.
+        assert!(is_first_party_origin(Some(
+            "https://Stream.OpenSeaFeed.com/"
+        )));
+        // A look-alike host is not us.
+        assert!(!is_first_party_origin(Some(
+            "https://stream.openseafeed.com.evil.example"
+        )));
+        assert!(!is_first_party_origin(Some(
+            "http://stream.openseafeed.com"
+        )));
+        assert!(!is_first_party_origin(Some("null")));
+        assert!(!is_first_party_origin(None));
     }
 
     #[tokio::test]

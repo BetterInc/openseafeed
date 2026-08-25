@@ -205,18 +205,23 @@ pub struct AidsToNavigationReport {
     pub name_extension: String,
 }
 
-/// Message type 24 — static data report. Part A carries the name, part B
-/// the rest.
-#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+/// Type 24 part A — the vessel's name.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
-pub struct StaticDataReport {
-    #[serde(flatten)]
-    pub header: Header,
-    pub part_number: u8,
-    // Part A
+pub struct StaticReportA {
+    /// Whether this half was the one actually broadcast.
+    pub valid: bool,
     pub name: String,
-    // Part B (field spellings follow aisstream.io, typos included)
+}
+
+/// Type 24 part B — type, vendor, call sign and dimensions.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct StaticReportB {
+    /// Whether this half was the one actually broadcast.
+    pub valid: bool,
     pub ship_type: u8,
+    // Field spellings follow aisstream.io, typos included.
     #[serde(rename = "VendorIDName")]
     pub vendor_id_name: String,
     #[serde(rename = "VenderIDModel")]
@@ -225,7 +230,31 @@ pub struct StaticDataReport {
     pub vender_id_serial: u32,
     pub call_sign: String,
     pub dimension: Dimension,
+    /// Carried for wire compatibility; type 24B has no EPFD bits to decode
+    /// it from, so it is 0 on anything this crate decodes.
+    pub fix_type: u8,
     pub spare: u8,
+}
+
+/// Message type 24 — static data report. A Class B vessel sends its name in
+/// part A and everything else in part B, and this is how Class B traffic
+/// gets a name at all.
+///
+/// The two halves are nested exactly as aisstream.io nests them: a flat
+/// struct here silently failed to deserialize their frames, which threw away
+/// every Class B identity on the feed (~9% of upstream messages).
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct StaticDataReport {
+    #[serde(flatten)]
+    pub header: Header,
+    /// false = part A, true = part B.
+    pub part_number: bool,
+    pub reserved: u8,
+    #[serde(rename = "ReportA")]
+    pub report_a: StaticReportA,
+    #[serde(rename = "ReportB")]
+    pub report_b: StaticReportB,
 }
 
 /// Message type 27 — long-range broadcast.

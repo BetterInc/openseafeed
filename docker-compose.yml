@@ -74,6 +74,11 @@ services:
       # Serve the live map from the bind mount below: edit web/live.html on
       # the host, refresh the browser — no image rebuild.
       OSF_LIVE_HTML: /app/web/live.html
+      # Warm new subscribers from the fleet the snapshotter already holds
+      # (empty disables the initial-state burst). Refreshed faster than the
+      # production default so a dev stack converges in seconds.
+      OSF_SNAPSHOT_URL: http://snapshotter:8082/v1/internal/snapshot
+      OSF_SEED_REFRESH_SECS: ${OSF_SEED_REFRESH_SECS:-15}
     volumes:
       - ./web:/app/web:ro
     ports:
@@ -95,6 +100,9 @@ services:
     command: ["openseafeed-snapshotter"]
     environment:
       <<: *app-env
+      # Snapshot every 15s in dev (production regenerates once a minute), so
+      # the fan-out warm start has something to serve almost immediately.
+      OSF_SNAPSHOT_SECS: ${OSF_SNAPSHOT_SECS:-15}
     ports:
       - "127.0.0.1:8082:8082"         # HTTP: /v1/snapshot, /v1/vessels/{mmsi}, /healthz
     volumes:

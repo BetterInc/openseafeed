@@ -206,8 +206,10 @@ fn type24_part_a() {
     let Packet::StaticDataReport(p) = &m.packet else {
         panic!()
     };
-    assert_eq!(p.part_number, 0);
-    assert_eq!(p.name, "HMS FOO");
+    assert!(!p.part_number);
+    assert!(p.report_a.valid);
+    assert!(!p.report_b.valid);
+    assert_eq!(p.report_a.name, "HMS FOO");
 }
 
 #[test]
@@ -217,14 +219,17 @@ fn type24_part_b() {
     let Packet::StaticDataReport(p) = &m.packet else {
         panic!()
     };
-    assert_eq!(p.part_number, 1);
-    assert_eq!(p.ship_type, 57);
-    assert_eq!(p.vendor_id_name, "COM");
-    assert_eq!(p.vender_id_model, 0);
-    assert_eq!(p.vender_id_serial, 335_872);
-    assert_eq!(p.call_sign, "");
+    assert!(p.part_number);
+    assert!(p.report_b.valid);
+    assert!(!p.report_a.valid);
+    let b = &p.report_b;
+    assert_eq!(b.ship_type, 57);
+    assert_eq!(b.vendor_id_name, "COM");
+    assert_eq!(b.vender_id_model, 0);
+    assert_eq!(b.vender_id_serial, 335_872);
+    assert_eq!(b.call_sign, "");
     assert_eq!(
-        (p.dimension.a, p.dimension.b, p.dimension.c, p.dimension.d),
+        (b.dimension.a, b.dimension.b, b.dimension.c, b.dimension.d),
         (4, 7, 2, 2)
     );
 }

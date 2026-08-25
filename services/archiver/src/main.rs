@@ -164,7 +164,11 @@ fn collect(
                 .format("%Y-%m-%d %H:%M:%S%.3f")
                 .to_string()
         });
-    let p = sm.message.get(&sm.message_type);
+    // Type 24 splits its fields across ReportA/ReportB; merge them so the
+    // static branch below reads them the same way as a type 5.
+    let raw = sm.message.get(&sm.message_type);
+    let flattened = raw.and_then(openseafeed_feed::flatten_static_report);
+    let p = flattened.as_ref().or(raw);
 
     let f = |k: &str| p.and_then(|v| v.get(k)).and_then(|x| x.as_f64());
     let u = |k: &str| p.and_then(|v| v.get(k)).and_then(|x| x.as_u64());

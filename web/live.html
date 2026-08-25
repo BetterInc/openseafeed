@@ -152,7 +152,7 @@ const map = new maplibregl.Map({
           "circle-color": ["match", ["get", "cat"],
             1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
             5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
-          "circle-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35],
+          "circle-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
         } },
       // Under-way vessels: arrows rotated to course over ground.
       { id: "vessels-moving", type: "symbol", source: "vessels",
@@ -171,7 +171,7 @@ const map = new maplibregl.Map({
           "icon-color": ["match", ["get", "cat"],
             1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
             5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
-          "icon-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35],
+          "icon-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
         } },
     ],
   },
@@ -218,11 +218,15 @@ function typeCat(t) {
   return 0;
 }
 
-// The control plane serves free-licensed vessel photos (Wikidata/Commons)
-// with CORS open; in dev the control plane runs on :8083.
-const API_BASE = location.host.startsWith("stream.")
-  ? location.origin.replace("//stream.", "//api.")
-  : "http://localhost:8083";
+// In production one hostname fronts every read API (api.<domain>, path-routed
+// at the edge), and all of them answer with CORS open so this page can call
+// them from the stream host. In dev there is no edge: each service listens on
+// its own port, so the paths split across them.
+const EDGE = location.host.startsWith("stream.");
+const API_ORIGIN = location.origin.replace("//stream.", "//api.");
+const API_BASE = EDGE ? API_ORIGIN : "http://localhost:8083";   // control: photos
+const SNAP_BASE = EDGE ? API_ORIGIN : "http://localhost:8082";  // snapshotter
+const HIST_BASE = EDGE ? API_ORIGIN : "http://localhost:8084";  // archiver
 
 const NAV_STATUS = ["under way (engine)", "at anchor", "not under command",
   "restricted manoeuvrability", "constrained by draught", "moored", "aground",
@@ -245,6 +249,34 @@ function loadPhoto(box, mmsi, imo) {
       credit.textContent = "photo - Wikimedia Commons";
       credit.className = "credit";
       box.replaceChildren(img, credit);
+    })
+    .catch(() => {});
+}
+
+// The proxy already holds the fleet - paint it before the first live message
+// arrives. Without this the map starts empty on every load and fills in over
+// the ~10 minutes it takes the world to transmit once, which is why our own
+// window on the feed looked emptier than clients that cache their own state.
+// Positions carry their real age, so anything stale renders as a faded dot
+// until its next broadcast lands.
+function loadFleet() {
+  fetch(`${SNAP_BASE}/v1/snapshot`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((snap) => {
+      if (!snap || !Array.isArray(snap.vessels)) return;
+      for (const sv of snap.vessels) {
+        if (typeof sv.lat !== "number" || typeof sv.lon !== "number") continue;
+        if (!sv.lat && !sv.lon) continue;
+        if (seen.has(sv.mmsi)) continue; // a live message already beat us to it
+        seen.set(sv.mmsi, {
+          lon: sv.lon, lat: sv.lat, t: sv.ts || Date.now(),
+          name: sv.name || "", sog: sv.sog, cog: sv.cog, heading: sv.hdg,
+          navStatus: sv.nav, type: "snapshot", stype: sv.type, imo: sv.imo,
+          info: { callsign: sv.callsign, destination: sv.dest, draught: sv.draught,
+                  length: sv.len, beam: sv.beam, eta: sv.eta },
+        });
+      }
+      refresh();
     })
     .catch(() => {});
 }
@@ -273,7 +305,13 @@ function refresh() {
   document.getElementById("vessels").textContent = seen.size.toLocaleString();
   if (detailMmsi != null) renderDetail(); // keep ages/position live
 }
-setInterval(refresh, 1000);
+// Each repaint rebuilds the whole FeatureCollection, which is O(fleet): at
+// world scale that is six figures of features, so repaint less often rather
+// than spend every second of a core on it.
+(function repaint() {
+  refresh();
+  setTimeout(repaint, seen.size > 20000 ? 3000 : 1000);
+})();
 
 for (const layer of ["vessels", "vessels-moving"]) {
   map.on("click", layer, (e) => {
@@ -372,7 +410,7 @@ function drawTrail() {
 // ClickHouse; anonymous access covers the last 48h, downsampled). Live
 // positions received while the panel is open then extend it.
 function loadTrack(mmsi) {
-  fetch(`${API_BASE}/v1/history/${mmsi}?step=60`)
+  fetch(`${HIST_BASE}/v1/history/${mmsi}?step=60`)
     .then((r) => (r.ok ? r.json() : null))
     .then((h) => {
       if (!h || detailMmsi !== mmsi || !Array.isArray(h.points)) return;
@@ -390,7 +428,7 @@ function loadTrack(mmsi) {
 // shared #vessel link shows the ship immediately instead of waiting for its
 // next broadcast. Live stream messages then take over.
 function seedVessel(mmsi) {
-  fetch(`${API_BASE}/v1/vessels/${mmsi}`)
+  fetch(`${SNAP_BASE}/v1/vessels/${mmsi}`)
     .then((r) => (r.ok ? r.json() : null))
     .then((sv) => {
       if (!sv || detailMmsi !== mmsi) return;
@@ -444,11 +482,11 @@ window.addEventListener("hashchange", route);
 
 // The map is a public window onto the network - viewers need no API key
 // (fanout's anonymous tier). Keys are for API consumers and are created on
-// the control plane. Anonymous viewing is capped to the free-tier area
-// (30000 square degrees); this box sits just under it and covers every major shipping
-// lane in the northern hemisphere plus the equatorial routes - i.e. all of
-// aisstream's global picture except the far south.
-const VIEW_BBOX = [[[-11, -180], [72, 180]]];
+// the control plane. OpenSeaFeed is the single uplink everyone downstream
+// streams off, so its own map asks for the whole world: fan-out grants
+// unmetered area to its first-party origins (OSF_VIEWER_ORIGINS), while
+// anonymous third-party clients keep the free tier's 30000 square degrees.
+const VIEW_BBOX = [[[-90, -180], [90, 180]]];
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
@@ -458,7 +496,9 @@ function connect() {
   status.textContent = "connecting...";
   ws.onopen = () => {
     status.textContent = "streaming";
-    ws.send(JSON.stringify({ BoundingBoxes: VIEW_BBOX }));
+    // No warm start over the socket: loadFleet() pulls the same vessels as
+    // one gzipped, cacheable HTTP response instead.
+    ws.send(JSON.stringify({ BoundingBoxes: VIEW_BBOX, InitialState: false }));
   };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
@@ -486,11 +526,19 @@ function connect() {
     // Static messages carry the vessel's particulars: remember them so the
     // detail panel can show everything the ship has told us.
     if (/Static|ExtendedClassB/.test(m.MessageType)) {
-      const D = pkt.Dimension || {};
+      // Type 24 splits its fields across ReportA (the name) and ReportB (the
+      // rest) - a Class B vessel sends one half per message. Merge whichever
+      // half this frame actually carried.
+      const sp = m.MessageType === "StaticDataReport"
+        ? Object.assign({},
+            pkt.ReportA && pkt.ReportA.Valid ? pkt.ReportA : null,
+            pkt.ReportB && pkt.ReportB.Valid ? pkt.ReportB : null)
+        : pkt;
+      const D = sp.Dimension || {};
       const len = (D.A || 0) + (D.B || 0);
-      const fresh = { callsign: pkt.CallSign, destination: pkt.Destination,
-                      draught: pkt.MaximumStaticDraught, eta: pkt.Eta,
-                      imoNumber: pkt.ImoNumber,
+      const fresh = { callsign: sp.CallSign, destination: sp.Destination,
+                      draught: sp.MaximumStaticDraught, eta: sp.Eta,
+                      imoNumber: sp.ImoNumber,
                       length: len || undefined,
                       beam: len ? (D.C || 0) + (D.D || 0) : undefined };
       v.info = Object.assign({}, prev.info);
@@ -553,6 +601,7 @@ function runSearch() {
 
 document.getElementById("go").onclick = connect;
 connect();
+loadFleet();
 route(); // honor a #vessel/<mmsi> deep link on load
 </script>
 </body>

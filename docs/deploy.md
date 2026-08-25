@@ -26,7 +26,7 @@ make dev-down   # tear down (named volumes are kept)
 | ingest       | 10110/udp, 10111/tcp, 8080       | feed intake; HTTP: WS `/v1/ingest`, `/healthz`, `/metrics` |
 | pipeline     | —                                | decode / validate / dedupe (NATS only) |
 | fanout       | 8081                             | live WS `/v1/stream`, `/healthz` |
-| snapshotter  | 8082                             | `/v1/snapshot`, `/v1/vessels/{mmsi}`, `/healthz` |
+| snapshotter  | 8082                             | `/v1/snapshot`, `/v1/vessels/{mmsi}`, `/v1/internal/snapshot` (private: fan-out's warm start), `/healthz` |
 | control      | 8083                             | accounts, OAuth, API keys, `/healthz` |
 | archiver     | 8084                             | NATS -> ClickHouse batch insert; HTTP: `/healthz` |
 | clickhouse   | 8123                             | columnar history store (HTTP interface) |

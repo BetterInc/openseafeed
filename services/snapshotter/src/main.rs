@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
@@ -122,6 +122,10 @@ async fn main() -> anyhow::Result<()> {
     let router = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/snapshot", get(get_snapshot))
+        // Freshest snapshot for other OpenSeaFeed services (fan-out seeds
+        // new subscribers from it). Not routed from the public edge, and
+        // guarded by the shared internal token on top of that.
+        .route("/v1/internal/snapshot", get(get_internal_snapshot))
         .route("/v1/vessels/{mmsi}", get(get_vessel))
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(&http_addr).await?;
@@ -306,7 +310,11 @@ async fn consume(nats: async_nats::Client, app: Arc<App>) {
     }
 }
 
-fn update_from_packet(v: &mut Vessel, message_type: &str, p: &serde_json::Value) {
+fn update_from_packet(v: &mut Vessel, message_type: &str, packet: &serde_json::Value) {
+    // Type 24 splits its fields across ReportA/ReportB; merge them so the
+    // static branch below reads them the same way as a type 5.
+    let flattened = openseafeed_feed::flatten_static_report(packet);
+    let p = flattened.as_ref().unwrap_or(packet);
     let f = |k: &str| p.get(k).and_then(|x| x.as_f64());
     let u = |k: &str| p.get(k).and_then(|x| x.as_u64());
     match message_type {
@@ -461,14 +469,52 @@ async fn authed_tier(
     Ok(info.tier)
 }
 
-async fn get_snapshot(State(app): State<Arc<App>>, Query(q): Query<KeyParam>) -> impl IntoResponse {
+/// Serve one snapshot: gzipped JSON, CORS-open so the live map can fetch it
+/// cross-origin from the stream host, with the generation headers exposed to
+/// the page so it can age the positions it paints.
+fn snapshot_response(snap: &Snapshot) -> axum::response::Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CONTENT_ENCODING, "gzip"),
+            (header::CACHE_CONTROL, "public, max-age=60"),
+            // Freshness depends on the caller's Origin (our own map gets the
+            // newest snapshot), so a shared cache must key on it.
+            (header::VARY, "Origin"),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                "x-osf-generated-at, x-osf-vessels",
+            ),
+        ],
+        [
+            ("x-osf-generated-at", snap.generated_at_ms.to_string()),
+            ("x-osf-vessels", snap.count.to_string()),
+        ],
+        snap.gzipped.clone(),
+    )
+        .into_response()
+}
+
+async fn get_snapshot(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Query(q): Query<KeyParam>,
+) -> impl IntoResponse {
     let tier = match authed_tier(&app, &q.key).await {
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
+    // Our own live map is served the newest snapshot: it is the shop window
+    // for this feed, and delaying it by ten minutes only makes the project
+    // look emptier than it is. Third-party anonymous callers keep the
+    // documented free-tier delay.
+    let first_party = openseafeed_keys::is_first_party_origin(
+        headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()),
+    );
     let st = app.state.read().await;
     let now = now_ms();
-    let pick = if tier == "contributor" {
+    let pick = if tier == "contributor" || first_party {
         st.snapshots.last().cloned()
     } else {
         // Newest snapshot that is at least FREE_TIER_AGE old; if the service
@@ -483,19 +529,44 @@ async fn get_snapshot(State(app): State<Arc<App>>, Query(q): Query<KeyParam>) ->
     let Some(snap) = pick else {
         return (StatusCode::SERVICE_UNAVAILABLE, "no snapshot yet").into_response();
     };
-    (
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::CONTENT_ENCODING, "gzip"),
-            (header::CACHE_CONTROL, "public, max-age=60"),
-        ],
-        [
-            ("x-osf-generated-at", snap.generated_at_ms.to_string()),
-            ("x-osf-vessels", snap.count.to_string()),
-        ],
-        snap.gzipped.clone(),
-    )
-        .into_response()
+    snapshot_response(&snap)
+}
+
+/// `GET /v1/internal/snapshot` — newest snapshot, no tier delay, for the
+/// other services on the private network.
+async fn get_internal_snapshot(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !internal_token_ok(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "invalid or missing X-Internal-Token",
+        )
+            .into_response();
+    }
+    let st = app.state.read().await;
+    match st.snapshots.last().cloned() {
+        Some(snap) => snapshot_response(&snap),
+        None => (StatusCode::SERVICE_UNAVAILABLE, "no snapshot yet").into_response(),
+    }
+}
+
+fn internal_token_ok(headers: &HeaderMap) -> bool {
+    let expected =
+        std::env::var("OSF_INTERNAL_TOKEN").unwrap_or_else(|_| "dev-internal-token".into());
+    let provided = headers
+        .get("x-internal-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .as_bytes();
+    // Non-short-circuiting compare, as in the control plane's guard.
+    provided.len() == expected.len()
+        && provided
+            .iter()
+            .zip(expected.as_bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
 }
 
 async fn get_vessel(

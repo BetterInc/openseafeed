@@ -65,6 +65,35 @@ pub struct StreamMessage {
     pub metadata: MetaData,
 }
 
+/// Type 24 (`StaticDataReport`) nests its two halves as `ReportA`/`ReportB`,
+/// the way aisstream.io does. Consumers that read static fields (`Name`,
+/// `CallSign`, `Dimension`, ...) the flat type 5 way get a merged view here
+/// instead of having to know which half a field lives in.
+///
+/// Returns `None` when the packet carries neither half, so the caller can
+/// keep using the original value.
+pub fn flatten_static_report(packet: &serde_json::Value) -> Option<serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    let mut found = false;
+    for half in ["ReportA", "ReportB"] {
+        let Some(obj) = packet.get(half).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        // A half the vessel did not broadcast is all zeroes and empty
+        // strings; merging it would overwrite the half that is real.
+        if obj.get("Valid").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        found = true;
+        for (k, v) in obj {
+            if k != "Valid" {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    found.then_some(serde_json::Value::Object(out))
+}
+
 /// NATS subject conventions.
 pub mod subjects {
     /// Raw envelopes from one station.
@@ -175,5 +204,44 @@ mod tests {
         assert_eq!(v["MessageType"], "PositionReport");
         assert_eq!(v["MetaData"]["MMSI"], 477_553_000);
         assert!(!v["Message"]["PositionReport"]["Latitude"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod static_report_tests {
+    use super::*;
+
+    #[test]
+    fn flattens_the_half_the_vessel_actually_sent() {
+        let packet = serde_json::json!({
+            "MessageID": 24, "UserID": 219017416, "PartNumber": false,
+            "ReportA": {"Valid": true, "Name": "PATRICE"},
+            "ReportB": {"Valid": false, "CallSign": "", "ShipType": 0},
+        });
+        let flat = flatten_static_report(&packet).unwrap();
+        assert_eq!(flat["Name"], "PATRICE");
+        // The empty half must not shadow anything.
+        assert!(flat.get("CallSign").is_none());
+        assert!(flat.get("Valid").is_none());
+    }
+
+    #[test]
+    fn part_b_carries_the_particulars() {
+        let packet = serde_json::json!({
+            "PartNumber": true,
+            "ReportA": {"Valid": false, "Name": ""},
+            "ReportB": {"Valid": true, "CallSign": "OY1234", "ShipType": 37,
+                        "Dimension": {"A": 4, "B": 7, "C": 2, "D": 2}},
+        });
+        let flat = flatten_static_report(&packet).unwrap();
+        assert_eq!(flat["CallSign"], "OY1234");
+        assert_eq!(flat["ShipType"], 37);
+        assert_eq!(flat["Dimension"]["A"], 4);
+    }
+
+    #[test]
+    fn a_type_5_packet_is_left_alone() {
+        let packet = serde_json::json!({"CallSign": "OY1234", "Destination": "AALBORG"});
+        assert!(flatten_static_report(&packet).is_none());
     }
 }

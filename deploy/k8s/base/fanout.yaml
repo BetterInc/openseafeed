@@ -46,10 +46,13 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              # Each replica holds the seed fleet (every vessel, pre-rendered
+              # as the frame a new subscriber is warmed with) - a few hundred
+              # bytes x ~150k vessels, plus the refresh's transient copy.
+              memory: 256Mi
             limits:
               cpu: "1"
-              memory: 256Mi
+              memory: 768Mi
 ---
 apiVersion: v1
 kind: Service

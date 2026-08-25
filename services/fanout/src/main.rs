@@ -12,6 +12,15 @@
 //! turned into NATS subscriptions on `ais.decoded.<c>.<c>...`; precise
 //! filtering then uses the message headers only (no JSON parsing on the hot
 //! path).
+//!
+//! Initial state: OpenSeaFeed holds one uplink per upstream feed and every
+//! consumer streams off this proxy, so a new subscriber can start from the
+//! fleet we already have instead of from nothing. The vessels in its
+//! bounding boxes are replayed as position reports the moment it subscribes
+//! (see `seed`), then the live deltas follow. Clients that want only the
+//! deltas send `"InitialState": false`.
+
+mod seed;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,6 +28,7 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::{header, HeaderMap};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use axum::Router;
@@ -33,11 +43,20 @@ use serde::Deserialize;
 const COVER_PRECISION: usize = 3;
 const MAX_CELLS_PER_CLIENT: usize = 48;
 /// Free-tier ceiling on the summed bounding-box area, in square degrees.
+/// First-party viewers (our own live map, by `Origin`) and contributors are
+/// not metered: see `openseafeed_keys::is_first_party_origin`.
 const FREE_TIER_MAX_AREA: f64 = 30_000.0;
+/// Default seed-fleet refresh: the snapshotter regenerates once a minute, so
+/// polling faster only re-fetches the same bytes. `OSF_SEED_REFRESH_SECS`
+/// overrides it (dev keeps both loops short).
+const SEED_REFRESH_SECS: u64 = 60;
+/// A client that cannot drain within this long is dead or hopelessly slow.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct App {
     nats: async_nats::Client,
     validator: Arc<Validator>,
+    seed: Arc<seed::SeedCache>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -50,6 +69,11 @@ struct Subscription {
     filters_ship_mmsi: Vec<String>,
     #[serde(rename = "FilterMessageTypes", default)]
     filter_message_types: Vec<String>,
+    /// Replay the vessels already in the requested boxes before streaming
+    /// live messages. Default on — an aisstream.io client that knows nothing
+    /// about it simply starts warm.
+    #[serde(rename = "InitialState", default)]
+    initial_state: Option<bool>,
 }
 
 struct ClientFilter {
@@ -105,6 +129,20 @@ impl ClientFilter {
         out
     }
 
+    /// Whether a seeded vessel passes this filter. Same rules as `matches`,
+    /// against the snapshot fields instead of NATS headers.
+    fn matches_seed(&self, v: &seed::SeedVessel) -> bool {
+        if !self.boxes.iter().any(|b| b.contains(v.lat, v.lon)) {
+            return false;
+        }
+        if !self.mmsi.is_empty() && !self.mmsi.contains(&v.mmsi.to_string()) {
+            return false;
+        }
+        // Seeded frames are position reports; a client filtering for other
+        // message types asked not to be sent these.
+        self.types.is_empty() || self.types.contains(seed::SEED_MESSAGE_TYPE)
+    }
+
     fn matches(&self, hdrs: &async_nats::HeaderMap) -> bool {
         let Some(lat) = header_f64(hdrs, headers::LAT) else {
             return false;
@@ -147,9 +185,19 @@ async fn main() -> anyhow::Result<()> {
     let nats = async_nats::connect(&nats_url).await?;
     tracing::info!(nats_url, "fanout connected to nats");
 
+    let seed = seed::SeedCache::from_env();
+    let seed_refresh: u64 = std::env::var("OSF_SEED_REFRESH_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(SEED_REFRESH_SECS);
+    tokio::spawn(
+        seed.clone()
+            .refresh_loop(Duration::from_secs(seed_refresh.max(1))),
+    );
     let app = Arc::new(App {
         nats,
         validator: Validator::from_env(),
+        seed,
     });
 
     let http_addr = std::env::var("OSF_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".into());
@@ -183,9 +231,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn ws_stream(State(app): State<Arc<App>>, ws: WebSocketUpgrade) -> impl IntoResponse {
+async fn ws_stream(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    // Our own live map is the shop window for this feed; metering it to the
+    // free-tier area is how it ended up showing less of the world than
+    // clients running their own upstream connection.
+    let first_party = openseafeed_keys::is_first_party_origin(
+        headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()),
+    );
     ws.on_upgrade(move |socket| async move {
-        if let Err(reason) = client_session(app, socket).await {
+        if let Err(reason) = client_session(app, socket, first_party).await {
             tracing::debug!(reason, "client session ended");
         }
     })
@@ -196,13 +254,20 @@ async fn ws_stream(State(app): State<Arc<App>>, ws: WebSocketUpgrade) -> impl In
 async fn apply_subscription(
     app: &App,
     text: &str,
-) -> Result<(ClientFilter, SelectAll<async_nats::Subscriber>), String> {
+    first_party: bool,
+) -> Result<(ClientFilter, SelectAll<async_nats::Subscriber>, bool), String> {
     let sub: Subscription =
         serde_json::from_str(text).map_err(|e| format!("invalid subscription JSON: {e}"))?;
-    // No key = anonymous viewer (the public live map): welcome, but capped to
-    // the free-tier area. A key that IS presented must still be valid.
+    // No key = anonymous viewer: welcome either way. From one of our own map
+    // origins that is the first-party viewer tier (unmetered); from anywhere
+    // else it is the free tier's area cap. A key that IS presented must
+    // still be valid.
     let tier = if sub.api_key.is_empty() {
-        "free".to_string()
+        if first_party {
+            openseafeed_keys::VIEWER_TIER.to_string()
+        } else {
+            "free".to_string()
+        }
     } else {
         app.validator
             .validate(&sub.api_key)
@@ -211,7 +276,8 @@ async fn apply_subscription(
             .tier
     };
     let filter = ClientFilter::from_subscription(&sub).map_err(str::to_string)?;
-    if tier != "contributor" && filter.total_area() > FREE_TIER_MAX_AREA {
+    let metered = tier != "contributor" && tier != openseafeed_keys::VIEWER_TIER;
+    if metered && filter.total_area() > FREE_TIER_MAX_AREA {
         return Err(format!(
             "free tier is limited to {FREE_TIER_MAX_AREA} square degrees of bounding-box area; \
              contribute a receiver or feed to unlock unlimited streaming"
@@ -227,10 +293,38 @@ async fn apply_subscription(
             .map_err(|e| format!("subscribe failed: {e}"))?;
         subs.push(s);
     }
-    Ok((filter, subs))
+    Ok((filter, subs, sub.initial_state.unwrap_or(true)))
 }
 
-async fn client_session(app: Arc<App>, mut socket: WebSocket) -> Result<(), &'static str> {
+/// Replay the vessels already in the client's boxes. Returns how many frames
+/// went out, or `Err` when the socket died mid-burst.
+async fn send_initial_state(
+    app: &App,
+    socket: &mut WebSocket,
+    filter: &ClientFilter,
+) -> Result<usize, &'static str> {
+    let fleet = app.seed.current().await;
+    let mut sent = 0usize;
+    for vessel in fleet.iter().filter(|v| filter.matches_seed(v)) {
+        match tokio::time::timeout(
+            SEND_TIMEOUT,
+            socket.send(WsMessage::Text(vessel.frame.to_string().into())),
+        )
+        .await
+        {
+            Ok(Ok(())) => sent += 1,
+            Ok(Err(_)) => return Err("socket closed during initial state"),
+            Err(_) => return Err("client could not drain the initial state"),
+        }
+    }
+    Ok(sent)
+}
+
+async fn client_session(
+    app: Arc<App>,
+    mut socket: WebSocket,
+    first_party: bool,
+) -> Result<(), &'static str> {
     // aisstream.io semantics: subscription must arrive within 3 seconds.
     let first = tokio::time::timeout(Duration::from_secs(3), socket.recv())
         .await
@@ -241,7 +335,8 @@ async fn client_session(app: Arc<App>, mut socket: WebSocket) -> Result<(), &'st
         return Err("first message must be a text subscription");
     };
 
-    let (mut filter, mut subs) = match apply_subscription(&app, &text).await {
+    let (mut filter, mut subs, want_seed) = match apply_subscription(&app, &text, first_party).await
+    {
         Ok(x) => x,
         Err(e) => {
             let _ = socket
@@ -250,9 +345,19 @@ async fn client_session(app: Arc<App>, mut socket: WebSocket) -> Result<(), &'st
             return Err("subscription rejected");
         }
     };
-    tracing::info!(cells = subs.len(), "client subscribed");
+    tracing::info!(cells = subs.len(), first_party, "client subscribed");
 
+    // Warm start before the deltas. Live messages queue in the NATS
+    // subscriber meanwhile; a world-sized burst can outrun that buffer, but
+    // the seed is the very state those messages would have carried, and the
+    // vessels transmit again within minutes.
     let mut sent: u64 = 0;
+    if want_seed {
+        let seeded = send_initial_state(&app, &mut socket, &filter).await?;
+        sent += seeded as u64;
+        tracing::info!(seeded, "initial state sent");
+    }
+
     let mut dropped: u64 = 0;
     loop {
         tokio::select! {
@@ -262,10 +367,10 @@ async fn client_session(app: Arc<App>, mut socket: WebSocket) -> Result<(), &'st
                     continue;
                 }
                 let body = String::from_utf8_lossy(&msg.payload).into_owned();
-                // A client that can't drain within 10s is dead or hopelessly
-                // slow; disconnect rather than buffer without bound.
+                // A client that can't drain within SEND_TIMEOUT is dead or
+                // hopelessly slow; disconnect rather than buffer without bound.
                 match tokio::time::timeout(
-                    Duration::from_secs(10),
+                    SEND_TIMEOUT,
                     socket.send(WsMessage::Text(body.into())),
                 ).await {
                     Ok(Ok(())) => sent += 1,
@@ -277,11 +382,19 @@ async fn client_session(app: Arc<App>, mut socket: WebSocket) -> Result<(), &'st
                 match ws_msg {
                     Some(Ok(WsMessage::Text(text))) => {
                         // Swap-and-replace resubscription.
-                        match apply_subscription(&app, &text).await {
-                            Ok((f, s)) => {
+                        match apply_subscription(&app, &text, first_party).await {
+                            Ok((f, s, seed_again)) => {
                                 filter = f;
                                 subs = s;
                                 tracing::info!(cells = subs.len(), "client resubscribed");
+                                // A swapped-in subscription is a new view of
+                                // the world: warm it the same way.
+                                if seed_again {
+                                    let seeded =
+                                        send_initial_state(&app, &mut socket, &filter).await?;
+                                    sent += seeded as u64;
+                                    tracing::info!(seeded, "initial state sent");
+                                }
                             }
                             Err(e) => {
                                 let _ = socket

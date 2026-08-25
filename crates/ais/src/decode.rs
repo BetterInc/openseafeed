@@ -212,27 +212,31 @@ pub fn decode_bits(bs: &Bits) -> Result<Message, DecodeError> {
         }
         24 => {
             need(160)?;
+            // Bits 38-39 select the half; 2 and 3 are reserved and carry
+            // neither, so both `valid` flags stay false.
             let part_number = bs.uint(38, 2) as u8;
             let mut p = StaticDataReport {
                 header,
-                part_number,
+                part_number: part_number == 1,
                 ..Default::default()
             };
             match part_number {
                 0 => {
-                    p.name = bs.string(40, 120);
-                    name = non_empty(&p.name);
+                    p.report_a.valid = true;
+                    p.report_a.name = bs.string(40, 120);
+                    name = non_empty(&p.report_a.name);
                 }
                 1 => {
                     need(168)?;
-                    p.ship_type = bs.uint(40, 8) as u8;
-                    ship_type = Some(p.ship_type);
-                    p.vendor_id_name = bs.string(48, 18);
-                    p.vender_id_model = bs.uint(66, 4) as u8;
-                    p.vender_id_serial = bs.uint(70, 20) as u32;
-                    p.call_sign = bs.string(90, 42);
-                    p.dimension = dimension(bs, 132);
-                    p.spare = bs.uint(162, 6) as u8;
+                    p.report_b.valid = true;
+                    p.report_b.ship_type = bs.uint(40, 8) as u8;
+                    ship_type = Some(p.report_b.ship_type);
+                    p.report_b.vendor_id_name = bs.string(48, 18);
+                    p.report_b.vender_id_model = bs.uint(66, 4) as u8;
+                    p.report_b.vender_id_serial = bs.uint(70, 20) as u32;
+                    p.report_b.call_sign = bs.string(90, 42);
+                    p.report_b.dimension = dimension(bs, 132);
+                    p.report_b.spare = bs.uint(162, 6) as u8;
                 }
                 _ => {}
             }

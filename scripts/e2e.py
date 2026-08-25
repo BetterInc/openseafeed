@@ -8,7 +8,9 @@ OSF_KEYS_MODE=dev. Feeds testdata/replay.nmea via UDP, then asserts:
 1. an aisstream.io-style WebSocket subscription over Seattle receives the
    PositionReport for MMSI 477553000;
 2. the full-fleet snapshot contains that vessel;
-3. an invalid API key is rejected with an error frame.
+3. an invalid API key is rejected with an error frame;
+4. a fresh subscription is warmed from the snapshot (initial state) and
+   `"InitialState": false` opts out of it.
 
 deps: pip install websockets requests
 """
@@ -90,6 +92,51 @@ def test_snapshot() -> None:
     raise AssertionError("snapshot never contained the test vessel")
 
 
+async def test_warm_start() -> None:
+    """A new subscriber gets the fleet we already hold, with no new traffic.
+
+    Nothing is fed during this test: every frame received has to come from
+    fan-out's seed of the snapshotter's state.
+    """
+    async with websockets.connect(FANOUT) as ws:
+        await ws.send(json.dumps(SUBSCRIBE))
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            raw = await asyncio.wait_for(ws.recv(), timeout=deadline - time.time())
+            msg = json.loads(raw)
+            if "error" in msg:
+                raise AssertionError(f"stream error: {msg}")
+            if msg["MetaData"]["MMSI"] == 477553000:
+                assert msg["MessageType"] == "PositionReport", msg
+                # The replayed frame carries the vessel's own last-heard time,
+                # not the moment of replay.
+                assert msg["MetaData"]["time_utc"], msg
+                return
+        raise AssertionError("no initial state for MMSI 477553000 within 30s")
+
+
+async def test_warm_start_opt_out() -> None:
+    """`InitialState: false` must not replay the vessel the seed holds.
+
+    Other vessels may still arrive here from whatever upstream feeds the
+    stack has connected - only the replay vessel, which is not transmitting,
+    proves whether the seed was sent.
+    """
+    async with websockets.connect(FANOUT) as ws:
+        await ws.send(json.dumps({**SUBSCRIBE, "InitialState": False}))
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=deadline - time.time())
+            except asyncio.TimeoutError:
+                return  # silence is the point
+            msg = json.loads(raw)
+            if "error" in msg:
+                raise AssertionError(f"stream error: {msg}")
+            if msg["MetaData"]["MMSI"] == 477553000:
+                raise AssertionError(f"expected no initial state, got {msg}")
+
+
 def main() -> None:
     r = requests.get(SNAPSHOT.replace("/v1/snapshot", "/healthz"), timeout=5)
     assert r.ok, "snapshotter not healthy"
@@ -99,6 +146,13 @@ def main() -> None:
     asyncio.run(test_bad_key())
     print("bad key rejected ok")
     test_snapshot()
+    # The seed is refreshed on its own interval; give fan-out one cycle to
+    # pick the snapshot up (OSF_SEED_REFRESH_SECS is 15 in the dev stack).
+    time.sleep(20)
+    asyncio.run(test_warm_start())
+    print("warm start ok: new subscriber seeded from the snapshot")
+    asyncio.run(test_warm_start_opt_out())
+    print("InitialState=false opts out ok")
     print("E2E PASS")
 
 

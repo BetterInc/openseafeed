@@ -9,3 +9,6 @@ data:
   OSF_NATS_URL: "nats://nats:4222"
   OSF_KEYS_MODE: "http"
   OSF_CONTROL_URL: "http://control:8083"
+  # Fleet fan-out seeds new subscribers from: the snapshotter's internal
+  # (undelayed) snapshot. Set empty to serve deltas only.
+  OSF_SNAPSHOT_URL: "http://snapshotter:8082/v1/internal/snapshot"
