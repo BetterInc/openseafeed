@@ -281,10 +281,16 @@ function loadFleet() {
     .catch(() => {});
 }
 
+// A ship silent this long is no longer "there" - drop its dot instead of
+// showing history as presence. (The detail panel still finds it via the
+// server-side snapshot and history.)
+const SILENT_DROP_MS = 60 * 60 * 1000;
+
 function refresh() {
   const now = Date.now();
   const features = [];
   for (const [mmsi, v] of seen) {
+    if (now - v.t > SILENT_DROP_MS && mmsi !== detailMmsi) { seen.delete(mmsi); continue; }
     // Under way = making way over ground with a usable direction; heading
     // beats course when both exist (it's what the ship actually points at).
     const rot = v.heading != null ? v.heading : v.cog;
