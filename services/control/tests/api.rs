@@ -271,7 +271,8 @@ async fn station_registration_and_tier_flip() {
     let station_id = created["station"]["id"].as_str().unwrap().to_string();
     assert!(station_key.starts_with("osf_stn_"));
 
-    // Before any heartbeat the owner is still on the free tier.
+    // Presenting the key to the data plane IS contributing: the first
+    // validate touches the key and the tier flips in the same response.
     let resp = app
         .clone()
         .oneshot(
@@ -286,7 +287,7 @@ async fn station_registration_and_tier_flip() {
     let v = body_json(resp).await;
     assert_eq!(v["valid"], true);
     assert_eq!(v["kind"], "station");
-    assert_eq!(v["tier"], "free");
+    assert_eq!(v["tier"], "contributor");
     assert_eq!(v["station_id"], station_id);
     assert_eq!(v["owner_id"], owner_id);
 
@@ -308,7 +309,7 @@ async fn station_registration_and_tier_flip() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // ...which flips the tier to contributor.
+    // ...and the tier stays contributor.
     let resp = app
         .oneshot(
             Request::builder()
