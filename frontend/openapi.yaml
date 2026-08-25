@@ -191,8 +191,9 @@ paths:
       summary: Full-fleet snapshot
       description: |
         Every vessel's current state as one gzip-compressed JSON document,
-        regenerated continuously. Anonymous/free tier receives a snapshot at
-        least 10 minutes old; contributors get the newest.
+        regenerated continuously. Everyone receives the newest snapshot -
+        freshness is never gated; limits elsewhere exist only to protect
+        shared resources.
       security: [{}, { apiKey: [] }]
       responses:
         "200":

@@ -3,8 +3,8 @@
 //!
 //! The full-fleet query ("give me all ~150k vessels") deliberately does NOT
 //! go over WebSocket: snapshots are generated once per interval and served
-//! as cacheable static bytes. Tier decides freshness: contributors get the
-//! newest snapshot, the free tier gets one at least 10 minutes old.
+//! as cacheable static bytes. Everyone gets the newest snapshot - freshness
+//! is never gated; the network is open to join, not a staleness paywall.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -25,7 +25,6 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 const SNAPSHOT_RING: usize = 15;
-const FREE_TIER_AGE: Duration = Duration::from_secs(600);
 const VESSEL_TTL: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Serialize, Clone, Default)]
@@ -439,7 +438,7 @@ async fn snapshot_loop(app: Arc<App>, interval: Duration) {
             gzipped,
             count,
         }));
-        // Ring must span at least the free-tier age; 15 x 60s does.
+        // A short ring of recent snapshots, kept for debugging/replay headroom.
         let len = st.snapshots.len();
         if len > SNAPSHOT_RING {
             st.snapshots.drain(..len - SNAPSHOT_RING);
@@ -501,31 +500,16 @@ async fn get_snapshot(
     headers: HeaderMap,
     Query(q): Query<KeyParam>,
 ) -> impl IntoResponse {
-    let tier = match authed_tier(&app, &q.key).await {
-        Ok(t) => t,
-        Err(e) => return e.into_response(),
-    };
-    // Our own live map is served the newest snapshot: it is the shop window
-    // for this feed, and delaying it by ten minutes only makes the project
-    // look emptier than it is. Third-party anonymous callers keep the
-    // documented free-tier delay.
-    let first_party = openseafeed_keys::is_first_party_origin(
-        headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()),
-    );
+    // A presented key must still be valid, but freshness is the same for
+    // everyone: OpenSeaFeed is an open network to join and support, not a
+    // product with a staleness paywall. Limits elsewhere exist only to
+    // protect shared resources, never to degrade the data.
+    if let Err(e) = authed_tier(&app, &q.key).await {
+        return e.into_response();
+    }
+    let _ = headers; // origin no longer matters: everyone gets the newest
     let st = app.state.read().await;
-    let now = now_ms();
-    let pick = if tier == "contributor" || first_party {
-        st.snapshots.last().cloned()
-    } else {
-        // Newest snapshot that is at least FREE_TIER_AGE old; if the service
-        // is younger than that, fall back to the oldest we have.
-        st.snapshots
-            .iter()
-            .rev()
-            .find(|s| now.saturating_sub(s.generated_at_ms) >= FREE_TIER_AGE.as_millis() as u64)
-            .cloned()
-            .or_else(|| st.snapshots.first().cloned())
-    };
+    let pick = st.snapshots.last().cloned();
     let Some(snap) = pick else {
         return (StatusCode::SERVICE_UNAVAILABLE, "no snapshot yet").into_response();
     };
