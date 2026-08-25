@@ -385,28 +385,38 @@ function refresh() {
   setTimeout(repaint, seen.size > 20000 ? 3000 : 1000);
 })();
 
+// One popup at a time, buildable from any path: a map click, a search
+// pick, or a #vessel deep link - so "go to ship" always shows the bubble.
+let activePopup = null;
+function showVesselPopup(mmsi) {
+  const v = seen.get(mmsi);
+  if (!v) return;
+  const esc = (s) => String(s).replace(/[<>&]/g, "");
+  const rot = v.heading != null ? v.heading : v.cog;
+  const moving = v.sog != null && v.sog >= 0.5 && rot != null;
+  const kind = CAT_NAMES[typeCat(v.stype)]
+    + (v.stype != null ? ` (type ${esc(v.stype)})` : "");
+  const photoId = `photo-${mmsi}`;
+  if (activePopup) activePopup.remove();
+  activePopup = new maplibregl.Popup({ maxWidth: "280px" })
+    .setLngLat([v.lon, v.lat])
+    .setHTML(
+      `<b>${esc(v.name) || "unnamed"}</b><br>` +
+      `MMSI ${esc(mmsi)} - ${kind}<br>` +
+      (moving
+        ? `${esc(v.sog)} kn, course ${Math.round(rot)} deg<br>`
+        : `stationary<br>`) +
+      `${esc(v.type)} - ${Math.round((Date.now() - v.t) / 1000)}s ago<br>` +
+      `<a href="#vessel/${esc(mmsi)}">details -&gt;</a>` +
+      `<div id="${photoId}"></div>`
+    )
+    .addTo(map);
+  const box = document.getElementById(photoId);
+  if (box) loadPhoto(box, mmsi, v.imo);
+}
+
 for (const layer of ["vessels", "vessels-moving"]) {
-  map.on("click", layer, (e) => {
-    const p = e.features[0].properties;
-    const esc = (s) => String(s).replace(/[<>&]/g, "");
-    const kind = CAT_NAMES[p.cat] + (p.stype != null ? ` (type ${esc(p.stype)})` : "");
-    const photoId = `photo-${p.mmsi}`;
-    new maplibregl.Popup({ maxWidth: "280px" })
-      .setLngLat(e.features[0].geometry.coordinates)
-      .setHTML(
-        `<b>${esc(p.name) || "unnamed"}</b><br>` +
-        `MMSI ${esc(p.mmsi)} - ${kind}<br>` +
-        (p.moving == 1
-          ? `${esc(p.sog)} kn, course ${Math.round(p.rot)} deg<br>`
-          : `stationary<br>`) +
-        `${esc(p.type)} - ${Math.round(p.age)}s ago<br>` +
-        `<a href="#vessel/${esc(p.mmsi)}">details -&gt;</a>` +
-        `<div id="${photoId}"></div>`
-      )
-      .addTo(map);
-    const box = document.getElementById(photoId);
-    if (box) loadPhoto(box, p.mmsi, p.imo);
-  });
+  map.on("click", layer, (e) => showVesselPopup(e.features[0].properties.mmsi));
   map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
@@ -525,6 +535,7 @@ function seedVessel(mmsi) {
       seen.set(mmsi, v);
       renderDetail();
       map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
+      showVesselPopup(mmsi);
     })
     .catch(() => {});
 }
@@ -541,9 +552,13 @@ function route() {
     seedVessel(detailMmsi);
     loadTrack(detailMmsi);
     const v = seen.get(detailMmsi);
-    if (v) map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
+    if (v) {
+      map.easeTo({ center: [v.lon, v.lat], zoom: Math.max(map.getZoom(), 8) });
+      showVesselPopup(detailMmsi);
+    }
   } else {
     detailMmsi = null;
+    if (activePopup) { activePopup.remove(); activePopup = null; }
     dEl.classList.remove("open");
     const src = map.getSource("trail");
     if (src) src.setData({ type: "FeatureCollection", features: [] });
