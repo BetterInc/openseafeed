@@ -262,6 +262,11 @@ document.getElementById("coverage").onchange = async (e) => {
 const seen = new Map(); // mmsi -> {lon, lat, t(ms), name, sog, cog, type, stype}
 let total = 0, windowCount = 0;
 let ws = null;
+// Detail-panel state, hoisted: refresh()/repaint run at parse time and read
+// detailMmsi (ghost pruning spares the vessel being inspected).
+let detailMmsi = null;
+let trail = [];
+let photoKey = ""; // `${mmsi}:${imo}` of the last photo request
 
 // ITU ship-type code -> category index; keep in sync with the layer "match"
 // expressions and the legend.
@@ -407,9 +412,8 @@ for (const layer of ["vessels", "vessels-moving"]) {
 }
 
 // -- Vessel detail panel (#vessel/<mmsi> hash route) -----------------------
-let detailMmsi = null;
-let trail = [];
-let photoKey = ""; // `${mmsi}:${imo}` of the last photo request
+// (declared near the top of the script: the repaint loop runs immediately
+// and reads detailMmsi, so the state must exist before it.)
 
 const dEl = document.getElementById("detail");
 document.getElementById("d-back").onclick = () => { location.hash = ""; };
