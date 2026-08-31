@@ -87,7 +87,8 @@
       <input type="text" id="search" placeholder="search name or MMSI" autocomplete="off">
       <div id="results"></div>
     </span>
-    <label><input type="checkbox" id="seamarks"> seamarks</label>
+    <label><input type="checkbox" id="depth" checked> depth</label>
+    <label><input type="checkbox" id="seamarks" checked> seamarks</label>
     <label><input type="checkbox" id="coverage"> coverage</label>
     <button id="go">connect</button>
   </div>
@@ -102,7 +103,9 @@
   <i style="background:#b98ae8"></i>sailing / pleasure&ensp;
   <i style="background:#e8d94f"></i>tug / pilot / SAR&ensp;
   <i style="background:#5fd8d2"></i>high-speed&ensp;
-  <i style="background:#8fa3b0"></i>other
+  <i style="background:#8fa3b0"></i>other<br>
+  <span style="opacity:.75">depth contours from zoom 4 (European seas) -
+  seamarks from zoom 9</span>
 </div>
 <aside id="detail">
   <button class="back" id="d-back">&lt;- back to map</button>
@@ -114,72 +117,99 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 "use strict";
+// OpenFreeMap serves this style straight from OpenStreetMap data with no key
+// and no signup, and is self-hostable if we ever want the map to depend on
+// nothing but us. CARTO, which this used to use, now stamps
+// "API KEY REQUIRED" across every tile - it still answers 200, so only a
+// rendered screenshot shows it.
+const BASE_STYLE = "https://tiles.openfreemap.org/styles/dark";
+
 const map = new maplibregl.Map({
   container: "map",
   center: [10, 45],
   zoom: 3,
   attributionControl: { compact: true },
-  style: {
-    version: 8,
-    sources: {
-      base: {
-        type: "raster",
-        tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        attribution: "&copy; OpenStreetMap contributors &copy; CARTO - seamarks &copy; OpenSeaMap",
-      },
-      seamark: {
-        type: "raster",
-        tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
-        tileSize: 256,
-      },
-      vessels: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
-      trail: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
-    },
-    layers: [
-      { id: "base", type: "raster", source: "base" },
-      { id: "seamark", type: "raster", source: "seamark",
-        layout: { visibility: "none" } },
-      // Track of the vessel currently open in the detail panel, drawn from
-      // the positions received while the panel is open.
-      { id: "trail", type: "line", source: "trail",
-        paint: { "line-color": "#7fd4a8", "line-width": 1.5, "line-opacity": 0.7 } },
-      // Stationary vessels: dots. Color = ship-type category (see
-      // CAT_COLORS below, kept in sync by buildColorExpr); opacity = age.
-      { id: "vessels", type: "circle", source: "vessels",
-        filter: ["!=", ["get", "moving"], 1],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.6, 8, 3.5, 12, 6],
-          "circle-color": ["match", ["get", "cat"],
-            1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
-            5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
-          "circle-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
-        } },
-      // Under-way vessels: arrows rotated to course over ground.
-      { id: "vessels-moving", type: "symbol", source: "vessels",
-        filter: ["==", ["get", "moving"], 1],
-        layout: {
-          "icon-image": "arrow",
-          // The source image is 48px; arrows run ~2x the dot size so
-          // under-way traffic clearly stands out from anchored bullets.
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.15, 8, 0.28, 12, 0.45],
-          "icon-rotate": ["get", "rot"],
-          "icon-rotation-alignment": "map",
-          "icon-allow-overlap": true,
-          "icon-ignore-placement": true,
-        },
-        paint: {
-          "icon-color": ["match", ["get", "cat"],
-            1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
-            5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
-          "icon-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
-        } },
-    ],
-  },
+  style: BASE_STYLE,
 });
 
+// Everything we draw on top of the basemap. Added on load because the style
+// arrives over the network: a vector style has no sources of ours until it
+// does.
+const OVERLAY_SOURCES = {
+  seamark: {
+    type: "raster",
+    tiles: ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
+    tileSize: 256,
+    attribution: "seamarks &copy; OpenSeaMap",
+  },
+  // Depth contours, drawn as transparent line art so they read as a chart
+  // over the dark ground instead of washing it out (a bathymetry colour
+  // surface, GEBCO's included, is styled for light maps and turns to mud
+  // when darkened). WMS, so MapLibre fills in each tile's bbox.
+  depth: {
+    type: "raster",
+    tiles: ["https://ows.emodnet-bathymetry.eu/wms?SERVICE=WMS&VERSION=1.3.0" +
+            "&REQUEST=GetMap&LAYERS=emodnet%3Acontours&STYLES=&CRS=EPSG%3A3857" +
+            "&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256" +
+            "&FORMAT=image%2Fpng&TRANSPARENT=true"],
+    tileSize: 256,
+    // EMODnet covers European seas; elsewhere the tiles come back empty.
+    attribution: "depth contours &copy; EMODnet Bathymetry",
+  },
+  vessels: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+  trail: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+};
+
+// Depth first, then the seamarks on top of it. Both are volunteer/research
+// services rather than CDNs, and both say nothing zoomed out - a world view
+// of seamarks is empty tiles, a world view of contours is scribble - so each
+// only draws where it has something to say, which also keeps our request
+// volume off their servers.
+const CHART_LAYERS = [
+  { id: "depth", type: "raster", source: "depth", minzoom: 4,
+    paint: { "raster-opacity": 0.35 } },
+  { id: "seamark", type: "raster", source: "seamark", minzoom: 9 },
+];
+
+const VESSEL_LAYERS = [
+  // Track of the vessel currently open in the detail panel, drawn from
+  // the positions received while the panel is open.
+  { id: "trail", type: "line", source: "trail",
+    paint: { "line-color": "#7fd4a8", "line-width": 1.5, "line-opacity": 0.7 } },
+  // Stationary vessels: dots. Color = ship-type category (see CAT_NAMES
+  // below); opacity = age.
+  { id: "vessels", type: "circle", source: "vessels",
+    filter: ["!=", ["get", "moving"], 1],
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 1.6, 8, 3.5, 12, 6],
+      "circle-color": ["match", ["get", "cat"],
+        1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
+        5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
+      "circle-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
+    } },
+  // Under-way vessels: arrows rotated to course over ground.
+  { id: "vessels-moving", type: "symbol", source: "vessels",
+    filter: ["==", ["get", "moving"], 1],
+    layout: {
+      "icon-image": "osf-arrow",
+      // The source image is 48px; arrows run ~2x the dot size so
+      // under-way traffic clearly stands out from anchored bullets.
+      "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.15, 8, 0.28, 12, 0.45],
+      "icon-rotate": ["get", "rot"],
+      "icon-rotation-alignment": "map",
+      "icon-allow-overlap": true,
+      "icon-ignore-placement": true,
+    },
+    paint: {
+      "icon-color": ["match", ["get", "cat"],
+        1, "#4fc06f", 2, "#e05252", 3, "#4f9fe8", 4, "#e8a54f",
+        5, "#b98ae8", 6, "#e8d94f", 7, "#5fd8d2", "#8fa3b0"],
+      "icon-opacity": ["step", ["get", "age"], 0.95, 10, 0.65, 120, 0.35, 3600, 0.18],
+    } },
+];
+
 // North-pointing arrow, generated at runtime as an SDF so icon-color tints
-// it per-vessel.
+// it per-vessel, then our sources and layers on top of the loaded style.
 map.on("load", () => {
   const s = 48, c = document.createElement("canvas");
   c.width = c.height = s;
@@ -192,12 +222,33 @@ map.on("load", () => {
   g.lineTo(11, s - 8);       // port tail
   g.closePath();
   g.fill();
-  map.addImage("arrow", g.getImageData(0, 0, s, s), { sdf: true });
+  // Namespaced: the basemap style ships its own sprite, and a bare "arrow"
+  // collides with an icon already in it.
+  map.addImage("osf-arrow", g.getImageData(0, 0, s, s), { sdf: true });
+
+  for (const [id, spec] of Object.entries(OVERLAY_SOURCES)) map.addSource(id, spec);
+  // Place names belong on top of the chart layers, under the ships.
+  const firstLabel = map.getStyle().layers.find((l) => l.type === "symbol");
+  for (const layer of CHART_LAYERS) map.addLayer(layer, firstLabel && firstLabel.id);
+  for (const layer of VESSEL_LAYERS) map.addLayer(layer);
+  syncOverlayToggles();
 });
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
 
-document.getElementById("seamarks").onchange = (e) =>
-  map.setLayoutProperty("seamark", "visibility", e.target.checked ? "visible" : "none");
+// Both start on; their layer minzooms decide when they actually appear, so
+// the boxes are for switching them off rather than discovering them. The
+// layers only exist once the style has loaded, hence the getLayer guard.
+const OVERLAY_TOGGLES = [["depth", "depth"], ["seamarks", "seamark"]];
+function syncOverlayToggles() {
+  for (const [box, layer] of OVERLAY_TOGGLES) {
+    if (!map.getLayer(layer)) continue;
+    const on = document.getElementById(box).checked;
+    map.setLayoutProperty(layer, "visibility", on ? "visible" : "none");
+  }
+}
+for (const [box] of OVERLAY_TOGGLES) {
+  document.getElementById(box).onchange = syncOverlayToggles;
+}
 
 // -- Coverage layer: where the network heard ships in the last 7 days. -----
 // Shaded cells = receivers can hear there; blank sea = nobody is listening,
